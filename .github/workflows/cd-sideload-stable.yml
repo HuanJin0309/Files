@@ -43,53 +43,6 @@ jobs:
     steps:
     - name: Checkout the repository
       uses: actions/checkout@v4
-    
-    # 第一步：提前生成证书（在配置和构建之前）
-    - name: Generate Self-Signed Certificate for UWP
-      shell: pwsh
-      run: |
-        # 生成自签名证书
-        $certPassword = "${{ secrets.SELF_SIGNED_CERT_PASSWORD }}"
-        $securePassword = ConvertTo-SecureString -String $certPassword -Force -AsPlainText
-        
-        # 生成证书 - 使用更长的有效期
-        $cert = New-SelfSignedCertificate `
-          -Type Custom `
-          -Subject "CN=Files Community" `
-          -KeyUsage DigitalSignature `
-          -FriendlyName "Files Sideload Certificate" `
-          -CertStoreLocation "Cert:\CurrentUser\My" `
-          -KeyExportPolicy Exportable `
-          -KeySpec Signature `
-          -KeyLength 2048 `
-          -HashAlgorithm SHA256 `
-          -NotAfter (Get-Date).AddYears(5) `
-          -TextExtension @(
-            "2.5.29.37={text}1.3.6.1.5.5.7.3.3",  # 代码签名
-            "2.5.29.19={text}"  # 基本约束
-          )
-        
-        # 导出PFX文件到临时位置
-        $tempCertPath = "$env:TEMP\FilesSideload.pfx"
-        Export-PfxCertificate -Cert $cert -FilePath $tempCertPath -Password $securePassword
-        
-        # 导出CER文件（用于查看）
-        $tempCerPath = "$env:TEMP\FilesSideload.cer"
-        Export-Certificate -Cert $cert -FilePath $tempCerPath -Type CERT
-        
-        # 设置证书路径环境变量供后续步骤使用
-        echo "CERT_PATH=$tempCertPath" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
-        
-        Write-Host "证书已生成"
-        Write-Host "PFX路径: $tempCertPath"
-        Write-Host "CER路径: $tempCerPath"
-        
-        # 显示证书信息
-        Get-ChildItem Cert:\CurrentUser\My | Where-Object {$_.Subject -like "*Files Community*"} | Format-List
-        
-        # 安装证书到受信任的根证书颁发机构（可选，但推荐）
-        Import-Certificate -FilePath $tempCerPath -CertStoreLocation Cert:\CurrentUser\Root
-
     - name: Setup MSBuild
       uses: microsoft/setup-msbuild@v2
     - name: Setup NuGet
@@ -150,7 +103,6 @@ jobs:
     - name: Build & package Files
       shell: pwsh
       run: |
-        # 使用证书路径构建包
         msbuild "$env:PACKAGE_PROJECT_PATH" `
         -t:Build `
         -t:_GenerateAppxPackage `
@@ -162,8 +114,6 @@ jobs:
         -p:UapAppxPackageBuildMode=Sideload `
         -p:GenerateAppInstallerFile=True `
         -p:AppInstallerUri=$env:APP_INSTALLER_SIDELOAD_URL `
-        -p:PackageCertificateKeyFile="$env:CERT_PATH" `
-        -p:PackageCertificatePassword="${{ secrets.SELF_SIGNED_CERT_PASSWORD }}" `
         -v:quiet
 
     - name: Remove empty files from the packages
@@ -171,7 +121,6 @@ jobs:
       run: find $ARTIFACTS_STAGING_DIR -empty -delete
 
     - name: Update appinstaller schema
-      shell: pwsh
       run: |
         $newSchema = "http://schemas.microsoft.com/appx/appinstaller/2018"
         $localFilePath = "${{ env.APPX_PACKAGE_DIR }}/Files.Package.appinstaller"
@@ -179,84 +128,22 @@ jobs:
         $fileContent = $fileContent.Replace("http://schemas.microsoft.com/appx/appinstaller/2017/2", $newSchema)
         $fileContent | Set-Content $localFilePath
 
-    # 可选的额外签名步骤（如果MSBuild签名不充分）
-    - name: Additional Signing (Optional)
-      shell: pwsh
-      run: |
-        # 查找最新的signtool
-        $signtoolPath = (Get-ChildItem "C:\Program Files (x86)\Windows Kits\10\bin\*\x64\signtool.exe" -Recurse | Sort-Object FullName -Descending | Select-Object -First 1).FullName
-        if (-not $signtoolPath) { 
-          $signtoolPath = (Get-ChildItem "C:\Program Files\Windows Kits\10\bin\*\x64\signtool.exe" -Recurse | Sort-Object FullName -Descending | Select-Object -First 1).FullName
-        }
-        
-        if ($signtoolPath) {
-          Write-Host "找到 signtool: $signtoolPath"
-          
-          # 签名所有.msix和.msixbundle文件
-          $files = Get-ChildItem "${{ env.APPX_PACKAGE_DIR }}" -Include "*.msix", "*.msixbundle" -Recurse
-          
-          foreach ($file in $files) {
-            Write-Host "正在签名: $($file.FullName)"
-            
-            # 尝试不同的时间戳服务器
-            $timestampServers = @(
-              "http://timestamp.digicert.com",
-              "http://timestamp.sectigo.com",
-              "http://timestamp.globalsign.com/scripts/timestamp.dll",
-              "http://timestamp.comodoca.com"
-            )
-            
-            $signed = $false
-            foreach ($timestamp in $timestampServers) {
-              try {
-                Write-Host "尝试时间戳服务器: $timestamp"
-                
-                # 签名命令
-                & $signtoolPath sign `
-                  /f "$env:CERT_PATH" `
-                  /p "${{ secrets.SELF_SIGNED_CERT_PASSWORD }}" `
-                  /fd SHA256 `
-                  /tr $timestamp `
-                  /td SHA256 `
-                  /v `
-                  "$($file.FullName)" 2>&1 | Out-Host
-                
-                # 验证签名
-                $sig = Get-AuthenticodeSignature -FilePath $file.FullName
-                if ($sig.Status -eq "Valid") {
-                  Write-Host "✓ 签名成功 (使用 $timestamp)"
-                  $signed = $true
-                  break
-                }
-              } catch {
-                Write-Host "使用 $timestamp 失败: $_"
-              }
-            }
-            
-            if (-not $signed) {
-              Write-Host "尝试不带时间戳签名..."
-              try {
-                & $signtoolPath sign `
-                  /f "$env:CERT_PATH" `
-                  /p "${{ secrets.SELF_SIGNED_CERT_PASSWORD }}" `
-                  /fd SHA256 `
-                  /v `
-                  "$($file.FullName)" 2>&1 | Out-Host
-                
-                $sig = Get-AuthenticodeSignature -FilePath $file.FullName
-                if ($sig.Status -eq "Valid") {
-                  Write-Host "✓ 签名成功 (无时间戳)"
-                } else {
-                  Write-Warning "签名验证失败: $($sig.Status)"
-                }
-              } catch {
-                Write-Warning "最终签名失败: $_"
-              }
-            }
-          }
-        } else {
-          Write-Warning "未找到 signtool，跳过额外签名步骤"
-        }
+    - name: Sign Files with Azure Trusted Signing
+      uses: azure/trusted-signing-action@v0.4.0
+      with:
+        azure-tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+        azure-client-id: ${{ secrets.AZURE_CLIENT_ID }}
+        azure-client-secret: ${{ secrets.AZURE_CLIENT_SECRET }}
+        endpoint: https://eus.codesigning.azure.net/
+        trusted-signing-account-name: ${{ secrets.SIGNING_ACCOUNT_NAME }}
+        certificate-profile-name: ${{ secrets.SIGNING_PROFILE_NAME }}
+        files-folder: ${{ env.APPX_PACKAGE_DIR }}
+        files-folder-filter: msixbundle
+        files-folder-recurse: true
+        files-folder-depth: 4
+        file-digest: SHA256
+        timestamp-rfc3161: http://timestamp.acs.microsoft.com
+        timestamp-digest: SHA256
 
     - name: Upload packages to Cloudflare
       uses: ryand56/r2-upload-action@latest
