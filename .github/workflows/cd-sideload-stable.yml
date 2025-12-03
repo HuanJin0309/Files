@@ -146,15 +146,30 @@ jobs:
     - name: Sign MSIX Bundle with Self-Signed Certificate
       shell: pwsh
       run: |
-       $certPath = "${{ env.APPX_PACKAGE_DIR }}\FilesTestCert.pfx"
+       $signtoolPath = Get-ChildItem -Path "C:\Program Files (x86)\Windows Kits\10\bin" `
+        -Filter "signtool.exe" `
+        -Recurse `
+        -File `
+        | Where-Object { $_.FullName -match "x64" } ` # 匹配 x64 架构（你的打包架构是 x64）
+        | Select-Object -Last 1 ` # 选最新版本的 SDK
+        | Select-Object -ExpandProperty FullName
+       if (-not $signtoolPath -or -not (Test-Path $signtoolPath)) {
+         throw "未找到 signtool.exe！请检查 Windows SDK 是否安装。"
+       }
+       Write-Host "找到 signtool 路径：$signtoolPath"
+       $certPath = "${{ env.APPX_PACKAGE_DIR }}\Files_SelfSigned_Cert.pfx"
        $certPassword = "${{ secrets.SELF_SIGNED_CERT_PASSWORD }}"
        $msixFile = Get-ChildItem -Path "${{ env.APPX_PACKAGE_DIR }}" -Filter "*.msixbundle" -Recurse | Select-Object -First 1
-       signtool sign /f $certPath /p $certPassword /fd SHA256 /t http://timestamp.acs.microsoft.com $msixFile.FullName
+       $timestampServer = "http://timestamp.acs.microsoft.com"
+       & $signtoolPath sign `
+         /f $certPath `
+         /p $certPassword `
+         /fd SHA256 `
+         /t $timestampServer `
+         $msixFile.FullName
        $signature = Get-AuthenticodeSignature -FilePath $msixFile.FullName
        if ($signature.Status -ne "Valid") {
-         throw "签名失败！签名状态：$($signature.Status)"
-       } else {
-         Write-Host "成功签名文件：$($msixFile.FullName)"
+        throw "签名失败！原因：$($signature.StatusMessage)"
        }
 
     - name: Upload packages to Cloudflare
