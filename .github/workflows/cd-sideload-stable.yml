@@ -182,13 +182,7 @@ jobs:
 
        # 4. 执行签名命令（关键修复：规范换行格式）
        Write-Host "🔍 开始执行签名命令..."
-       $signtoolResult = & $signtoolPath sign `  # 末尾加反引号，反引号后无空格
-         /f $certPath `  # 每个参数行末尾加反引号，反引号后无空格
-         /p $certPassword `  # /p 是 signtool 的参数，会被正确识别
-         /fd SHA256 `
-         /t $timestampServer `
-         $msixFile.FullName  # 最后一个参数无需加反引号（命令结束）
-         2>&1  # 捕获完整输出（包括错误）
+       $signtoolResult = & $signtoolPath sign /f $certPath /p $certPassword /fd SHA256 /t $timestampServer $msixFile.FullName 2>&1
 
        # 5. 打印 signtool 输出（便于定位后续问题）
        Write-Host "`n📝 signtool 执行输出："
