@@ -153,39 +153,50 @@ jobs:
     - name: Sign MSIX Bundle with Self-Signed Certificate
       shell: pwsh
       run: |
-       $signtoolPath = Get-ChildItem -Path "C:\Program Files (x86)\Windows Kits\10\bin" `
-         -Filter "signtool.exe" `
-         -Recurse `
-         -File `
-         | Where-Object { $_.FullName -match "x64" } `
-         | Select-Object -Last 1 `
-         | Select-Object -ExpandProperty FullName
-       if (-not $signtoolPath -or -not (Test-Path $signtoolPath)) {
-         throw "未找到 signtool.exe！请检查 Windows SDK 是否安装。"
-       }
-       Write-Host "找到 signtool 路径：$signtoolPath"
-       $certPath = "${{ env.APPX_PACKAGE_DIR }}\FilesTestCert.pfx"  # 改为 FilesTestCert.pfx，和生成步骤匹配
-       $certPassword = "${{ secrets.SELF_SIGNED_CERT_PASSWORD }}"
-       if (-not (Test-Path $certPath)) {
-         throw "证书文件不存在！路径：$certPath，请检查生成证书步骤是否正常。"
-       }
-       Write-Host "找到证书文件：$certPath"
-       $msixFile = Get-ChildItem -Path "${{ env.APPX_PACKAGE_DIR }}" -Filter "*.msixbundle" -Recurse | Select-Object -First 1
-       if (-not $msixFile) {
-         throw "未找到 .msixbundle 文件！路径：${{ env.APPX_PACKAGE_DIR }}"
-       }
-       Write-Host "找到待签名文件：$($msixFile.FullName)"
-       $timestampServer = "http://timestamp.acs.microsoft.com"
-       & $signtoolPath sign `
-         /f $certPath `
-         /p $certPassword `
-         /fd SHA256 `
-         /t $timestampServer `
-         $msixFile.FullName
-       $signature = Get-AuthenticodeSignature -FilePath $msixFile.FullName
-       if ($signature.Status -ne "Valid") {
-         throw "签名失败！原因：$($signature.StatusMessage)，证书路径：$certPath，待签名文件：$($msixFile.FullName)"
-       }
+        # 1. 查找 signtool 路径（原有逻辑不变）
+        $signtoolPath = Get-ChildItem -Path "C:\Program Files (x86)\Windows Kits\10\bin" `
+        -Filter "signtool.exe" `
+        -Recurse `
+        -File `
+        | Where-Object { $_.FullName -match "x64" } `
+        | Select-Object -Last 1 `
+        | Select-Object -ExpandProperty FullName
+        if (-not $signtoolPath -or -not (Test-Path $signtoolPath)) {
+          throw "未找到 signtool.exe！路径：$signtoolPath"
+        }
+        Write-Host "✅ 找到 signtool：$signtoolPath"
+        # 2. 定位证书和待签名文件（原有逻辑不变，新增文件存在验证）
+        $certPath = "${{ env.APPX_PACKAGE_DIR }}\FilesTestCert.pfx"
+        $certPassword = "${{ secrets.SELF_SIGNED_CERT_PASSWORD }}"
+        $msixFile = Get-ChildItem -Path "${{ env.APPX_PACKAGE_DIR }}" -Filter "*.msixbundle" -Recurse | Select-Object -First 1
+        # 验证文件存在（已确认存在，可保留防意外）
+        if (-not (Test-Path $certPath)) { throw "证书不存在：$certPath" }
+        if (-not $msixFile) { throw "未找到 MSIX 文件" }
+        Write-Host "✅ 证书路径：$certPath"
+        Write-Host "✅ 待签名文件：$($msixFile.FullName)"
+        # 3. 执行签名命令，捕获完整输出（关键修改：2>&1 捕获错误输出）
+        Write-Host "🔍 开始执行签名命令..."
+        # 用变量存储 signtool 的所有输出（包括成功/失败信息）
+        $signtoolResult = & $signtoolPath sign `
+          /f $certPath `          # 证书文件
+          /p $certPassword `       # 证书密码
+          /fd SHA256 `             # 签名算法
+          /t http://timestamp.acs.microsoft.com `  # 时间戳服务器
+          $msixFile.FullName `     # 目标文件
+          2>&1                     # 强制将错误输出重定向到标准输出，避免丢失
+        # 4. 打印 signtool 完整输出（无论成功/失败，都能看到细节）
+        Write-Host "`n📝 signtool 执行输出："
+        Write-Host $signtoolResult  # 这行能显示真实报错（如密码错、证书无效）
+        # 5. 验证签名结果（原有逻辑不变）
+        $signature = Get-AuthenticodeSignature -FilePath $msixFile.FullName
+        Write-Host "`n✅ 签名状态检查："
+        Write-Host "签名状态：$($signature.Status)"
+        Write-Host "签名者：$($signature.SignerCertificate.Subject)"
+        if ($signature.Status -ne "Valid") {
+          throw "❌ 签名失败！signtool 输出：$signtoolResult"
+        } else {
+          Write-Host "🎉 签名成功！"
+        }
 
     - name: Upload packages to Cloudflare
       uses: ryand56/r2-upload-action@latest
