@@ -134,32 +134,47 @@ jobs:
        $publisher = "${{ secrets.SIDELOAD_PUBLISHER_SECRET }}"  # 复用之前配置的发布者信息
        $certPath = "${{ env.APPX_PACKAGE_DIR }}\FilesTestCert.pfx"  # 证书保存路径
        $certPassword = "${{ secrets.SELF_SIGNED_CERT_PASSWORD }}"  # 证书密码（需提前存到 GitHub Secrets）
+    
        $cert = New-SelfSignedCertificate -Type Custom `
         -Subject "CN=$publisher" `
         -KeyUsage DigitalSignature `
         -FriendlyName "Files-SelfSigned-Cert" `
         -CertStoreLocation "Cert:\CurrentUser\My" `
         -TextExtension @("2.5.29.37={text}1.3.6.1.5.5.7.3.3", "2.5.29.19={text}")  # 标记为代码签名证书
+    
        $securePassword = ConvertTo-SecureString -String $certPassword -Force -AsPlainText
        Export-PfxCertificate -Cert $cert -FilePath $certPath -Password $securePassword
+       if (-not (Test-Path $certPath)) {
+         throw "自签名证书生成失败！文件未找到：$certPath"
+       } else {
+         Write-Host "自签名证书生成成功！路径：$certPath"
+       }
 
     - name: Sign MSIX Bundle with Self-Signed Certificate
       shell: pwsh
       run: |
        $signtoolPath = Get-ChildItem -Path "C:\Program Files (x86)\Windows Kits\10\bin" `
-        -Filter "signtool.exe" `
-        -Recurse `
-        -File `
-        | Where-Object { $_.FullName -match "x64" } ` # 匹配 x64 架构（你的打包架构是 x64）
-        | Select-Object -Last 1 ` # 选最新版本的 SDK
-        | Select-Object -ExpandProperty FullName
+         -Filter "signtool.exe" `
+         -Recurse `
+         -File `
+         | Where-Object { $_.FullName -match "x64" } `
+         | Select-Object -Last 1 `
+         | Select-Object -ExpandProperty FullName
        if (-not $signtoolPath -or -not (Test-Path $signtoolPath)) {
          throw "未找到 signtool.exe！请检查 Windows SDK 是否安装。"
        }
        Write-Host "找到 signtool 路径：$signtoolPath"
-       $certPath = "${{ env.APPX_PACKAGE_DIR }}\Files_SelfSigned_Cert.pfx"
+       $certPath = "${{ env.APPX_PACKAGE_DIR }}\FilesTestCert.pfx"  # 改为 FilesTestCert.pfx，和生成步骤匹配
        $certPassword = "${{ secrets.SELF_SIGNED_CERT_PASSWORD }}"
+       if (-not (Test-Path $certPath)) {
+         throw "证书文件不存在！路径：$certPath，请检查生成证书步骤是否正常。"
+       }
+       Write-Host "找到证书文件：$certPath"
        $msixFile = Get-ChildItem -Path "${{ env.APPX_PACKAGE_DIR }}" -Filter "*.msixbundle" -Recurse | Select-Object -First 1
+       if (-not $msixFile) {
+         throw "未找到 .msixbundle 文件！路径：${{ env.APPX_PACKAGE_DIR }}"
+       }
+       Write-Host "找到待签名文件：$($msixFile.FullName)"
        $timestampServer = "http://timestamp.acs.microsoft.com"
        & $signtoolPath sign `
          /f $certPath `
@@ -169,7 +184,7 @@ jobs:
          $msixFile.FullName
        $signature = Get-AuthenticodeSignature -FilePath $msixFile.FullName
        if ($signature.Status -ne "Valid") {
-        throw "签名失败！原因：$($signature.StatusMessage)"
+         throw "签名失败！原因：$($signature.StatusMessage)，证书路径：$certPath，待签名文件：$($msixFile.FullName)"
        }
 
     - name: Upload packages to Cloudflare
