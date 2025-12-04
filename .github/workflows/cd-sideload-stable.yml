@@ -97,8 +97,7 @@ jobs:
         }
         & $scriptPath `
           -Destination "$env:SELF_SIGNED_CERT_PATH" `
-          -ValidityDays 365 `
-          -Password ""
+          -ValidityDays 365
 
     - name: Use Windows SDK Preview
       shell: cmd
@@ -178,3 +177,4 @@ jobs:
       with:
         name: 'Appx Packages (${{ env.CONFIGURATION }}, ${{ env.PLATFORM }})'
         path: ${{ env.ARTIFACTS_STAGING_DIR }}
+
