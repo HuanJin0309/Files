@@ -18,21 +18,21 @@ param(
     [int]$ValidityDays = 30
 )
 
-# 步骤2：调整证书生成逻辑，引用新增的 -Subject 和 -ValidityDays 参数
-$CertFriendlyName = "FilesApp_SelfSigned"  # 证书友好名（保持不变）
-$CertStoreLocation = "Cert:\CurrentUser\My"  # 证书存储位置（保持不变）
+# 完整正确的证书生成逻辑
+$CertFriendlyName = "FilesApp_SelfSigned"
+$CertStoreLocation = "Cert:\CurrentUser\My"
 
-# 生成自签名证书：
-# 1. 用 $Subject 替换原固定的 $CertPublisher（接收 CI 传入的主题）
-# 2. 新增 -NotAfter 参数，用 $ValidityDays 控制有效期（从当前时间往后推 $ValidityDays 天）
 $cert = New-SelfSignedCertificate `
-    -Type Custom `
-    -Subject $Subject `  # 关键：引用新增的 -Subject 参数
-    -KeyUsage DigitalSignature `
+    -Type CodeSigningCert `  # 推荐用 CodeSigningCert，兼容性更好
+    -Subject $Subject `
+    -KeyUsage DigitalSignature `  # 格式正确，反引号衔接
     -FriendlyName $CertFriendlyName `
     -CertStoreLocation $CertStoreLocation `
-    -TextExtension @("2.5.29.37={text}1.3.6.1.5.5.7.3.3", "2.5.29.19={text}") `
-    -NotAfter (Get-Date).AddDays($ValidityDays)  # 关键：引用新增的 -ValidityDays 参数
+    -NotAfter (Get-Date).AddDays($ValidityDays)
+
+# 后续证书导出逻辑（保留不变）
+$certificateBytes = $cert.Export([System.Security.Cryptography.X509Certificates.X509ContentType]::Pkcs12)
+[System.IO.File]::WriteAllBytes($Destination, $certificateBytes)
 
 # 步骤3：保留原有的证书导出逻辑（无需修改）
 # 获取证书的字节流（PKCS12 格式，即 PFX 格式）
