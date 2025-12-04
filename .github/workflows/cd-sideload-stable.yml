@@ -77,6 +77,17 @@ jobs:
         # 将路径存入环境变量，后续步骤可直接引用
         echo "SELF_SIGNED_CERT_PATH=$selfSignedCertPath" >> $env:GITHUB_ENV
 
+    - name: Create artifacts directory for self-signed cert
+      shell: pwsh
+      run: |
+        # 引用全局环境变量 ARTIFACTS_STAGING_DIR（即证书的上级目录：D:\a\Files\Files\artifacts）
+        $artifactsDir = "${{ env.ARTIFACTS_STAGING_DIR }}"
+        # 检查目录是否存在，不存在则创建（-Force 支持嵌套目录创建，避免遗漏）
+        if (-not (Test-Path -Path $artifactsDir)) {
+           New-Item -Path $artifactsDir -ItemType Directory -Force | Out-Null
+           Write-Host "Successfully created artifacts directory: $artifactsDir"
+        }
+
     - name: Generate self-signed PFX certificate (for test/backup)
       shell: pwsh
       run: |
