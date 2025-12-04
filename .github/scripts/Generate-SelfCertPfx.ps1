@@ -13,14 +13,19 @@ param(
 # 完整正确的证书生成逻辑
 $CertFriendlyName = "FilesApp_SelfSigned"
 $CertStoreLocation = "Cert:\CurrentUser\My"
+$DnsName = "Files.Sideload"
 
 $cert = New-SelfSignedCertificate `
-    -Type CodeSigningCert `
-    -Subject "CN=Files" `  # 硬编码，100%非空，无需依赖变量
+    -Type Custom `
+    -DnsName $DnsName `
     -KeyUsage DigitalSignature `
     -FriendlyName $CertFriendlyName `
     -CertStoreLocation $CertStoreLocation `
     -NotAfter (Get-Date).AddDays($ValidityDays)
+    -TextExtension @(
+        "2.5.29.37={text}1.3.6.1.5.5.7.3.3",
+        "2.5.29.17={text}DNS=$DnsName"
+    )
 
 # 步骤3：保留原有的证书导出逻辑（无需修改）
 # 获取证书的字节流（PKCS12 格式，即 PFX 格式）
@@ -31,5 +36,5 @@ $certificateBytes = $cert.Export([System.Security.Cryptography.X509Certificates.
 # 可选：添加成功日志，便于 CI 调试
 Write-Host "Self-signed certificate generated successfully! "
 Write-Host "Path: $Destination "
-Write-Host "Subject: $Subject "
+Write-Host "Subject: $DnsName "
 Write-Host "Validity: $ValidityDays days (from current date)"
