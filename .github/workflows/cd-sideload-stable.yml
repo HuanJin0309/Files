@@ -269,21 +269,31 @@ jobs:
         # 输出版本号到变量，供后续步骤使用
         echo "pre_release_version=$preReleaseVersion" >> $env:GITHUB_OUTPUT
 
-        # 引用步骤1输出的产物路径
+        # 引用验证步骤输出的所有产物路径（含 Artifacts 压缩包）
         $msixbundlePath = "${{ steps.verify_artifacts.outputs.msixbundle_path }}"
         $appinstallerPath = "${{ steps.verify_artifacts.outputs.appinstaller_path }}"
-        if ([string]::IsNullOrEmpty($msixbundlePath) -or [string]::IsNullOrEmpty($appinstallerPath)) {
-          throw "❌ 产物路径为空（MSIX：$msixbundlePath，Appinstaller：$appinstallerPath）"
+        $compressedPath = "${{ steps.verify_artifacts.outputs.compressed_path }}"
+        $compressedName = "${{ steps.verify_artifacts.outputs.compressed_name }}"
+
+        # 验证关键路径非空（新增压缩包路径验证）
+        if ([string]::IsNullOrEmpty($msixbundlePath) -or [string]::IsNullOrEmpty($appinstallerPath) -or [string]::IsNullOrEmpty($compressedPath)) {
+          throw "❌ 产物路径为空（MSIX：$msixbundlePath，Appinstaller：$appinstallerPath，Artifacts 压缩包：$compressedPath）"
         }
 
-        # 输出关键路径
+        # 输出所有路径（新增压缩包路径输出）
         echo "msixbundle_path=$msixbundlePath" >> $env:GITHUB_OUTPUT
         echo "appinstaller_path=$appinstallerPath" >> $env:GITHUB_OUTPUT
+        echo "compressed_path=$compressedPath" >> $env:GITHUB_OUTPUT
+        # 重命名压缩包（含版本号，便于区分历史版本）
+        $renamedCompressedName = "Files-Artifacts-${preReleaseVersion}.zip"
+        echo "renamed_compressed_name=$renamedCompressedName" >> $env:GITHUB_OUTPUT
 
-        # 日志输出
+        # 日志输出（新增压缩包信息）
         Write-Host "✅ Generated Pre-release version: $preReleaseVersion"
         Write-Host "✅ MSIXbundle 路径：$msixbundlePath"
         Write-Host "✅ Appinstaller 路径：$appinstallerPath"
+        Write-Host "✅ Artifacts 压缩包路径：$compressedPath"
+        Write-Host "✅ 上传后压缩包名称：$renamedCompressedName"
 
     - name: Create GitHub Pre-release
       id: create_pre_release
@@ -301,12 +311,17 @@ jobs:
           - **App Installer**: Direct sideload installation
           - **MSIX Bundle**: x64 + arm64 platforms（关键修改：将 Appx 改为 MSIX）
           - **Self-signed Cert**: Required for sideload (valid for 365 days)
+          - **Artifacts Compressed File**: Full build outputs (matches GitHub Artifacts: `Appx Packages (Release, x64).zip`)  # 新增压缩包说明
       
           ### 🔧 Build Details
           - Configuration: ${{ env.CONFIGURATION }}
           - Target Platforms: ${{ env.APPX_BUNDLE_PLATFORMS }}
           - Build Time: ${{ steps.get_pre_release_version.outputs.pre_release_version }}
           - R2 CDN Link: [${{ env.APP_INSTALLER_SIDELOAD_URL }}Files.Package.appinstaller](${{ env.APP_INSTALLER_SIDELOAD_URL }}Files.Package.appinstaller)
+      
+          ### ⚠️ Note
+          - The Artifacts compressed file is identical to GitHub Artifacts for offline use.
+          - Install the self-signed cert first before deploying the MSIX bundle.
         draft: false
         prerelease: true
         target_commitish: ${{ github.ref_name }}
@@ -333,16 +348,6 @@ jobs:
         asset_content_type: application/vnd.microsoft.msixbundle
       continue-on-error: false
 
-    - name: Upload Appx Bundle to Pre-release
-      uses: actions/upload-release-asset@v1
-      env:
-        GITHUB_TOKEN: ${{ secrets.GH_PAT }}
-      with:
-        upload_url: ${{ steps.create_pre_release.outputs.upload_url }}
-        asset_path: ${{ steps.get_pre_release_version.outputs.extracted_x64_appx_path }}
-        asset_name: Files.Package-${{ steps.get_pre_release_version.outputs.pre_release_version }}-x64.appx
-        asset_content_type: application/vnd.microsoft.appx  # Appx 文件的标准 MIME 类型
-
     - name: Upload Self-signed Cert to Pre-release
       uses: actions/upload-release-asset@v1
       env:
@@ -352,6 +357,17 @@ jobs:
         asset_path: ${{ env.SELF_SIGNED_CERT_PATH }} # 现有证书路径（从环境变量获取）
         asset_name: Files_SelfSigned-${{ steps.get_pre_release_version.outputs.pre_release_version }}.pfx # 含版本号，便于区分
         asset_content_type: application/x-pkcs12 # PFX 证书标准 MIME 类型
+
+    - name: Upload Artifacts Compressed File to Pre-release
+      uses: actions/upload-release-asset@v1
+      env:
+        GITHUB_TOKEN: ${{ secrets.GH_PAT }}
+      with:
+        upload_url: ${{ steps.create_pre_release.outputs.upload_url }}
+        asset_path: ${{ steps.get_pre_release_version.outputs.compressed_path }} # 引用 Artifacts 压缩包路径
+        asset_name: ${{ steps.get_pre_release_version.outputs.renamed_compressed_name }} # 重命名后的压缩包名称
+        asset_content_type: application/zip # Zip 文件标准 MIME 类型
+      continue-on-error: false
 
     - name: Clean up old Pre-releases
       id: clean_old_pre_releases
