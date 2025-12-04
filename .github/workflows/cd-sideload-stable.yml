@@ -309,16 +309,6 @@ jobs:
         asset_content_type: application/vnd.microsoft.msixbundle
       continue-on-error: false
 
-    - name: Upload Appx Bundle to Pre-release
-      uses: actions/upload-release-asset@v1
-      env:
-        GITHUB_TOKEN: ${{ secrets.GH_PAT }}
-      with:
-        upload_url: ${{ steps.create_pre_release.outputs.upload_url }}
-        asset_path: ${{ steps.get_pre_release_version.outputs.extracted_x64_appx_path }}
-        asset_name: Files.Package-${{ steps.get_pre_release_version.outputs.pre_release_version }}-x64.appx
-        asset_content_type: application/vnd.microsoft.appx  # Appx 文件的标准 MIME 类型
-
     - name: Upload Self-signed Cert to Pre-release
       uses: actions/upload-release-asset@v1
       env:
@@ -389,4 +379,5 @@ jobs:
           Write-Host "✅ Deleted Pre-release and Tag: $releaseTag"
         }
     
+
         Write-Host "✅ Clean-up completed successfully (deleted $($releasesToDelete.Count) old Pre-releases)"
