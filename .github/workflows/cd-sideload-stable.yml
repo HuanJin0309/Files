@@ -1,0 +1,374 @@
+# Copyright (c) Files Community
+# Licensed under the MIT License.
+
+# Abstract:
+#  Deploys Files (Sideload).
+#
+# Workflow:
+#  1. Configure manifest, logo and secrets
+#  2. Restore, build and package Files
+#  3. Publish the appinstaller to files.community
+#  4. Sign the package
+#  5. Publish the package to Azure
+
+name: Files CD (Sideload Stable)
+
+on:
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: windows-latest
+    environment: Deployments
+    strategy:
+      fail-fast: false
+      matrix:
+        configuration: [Release]
+        platform: [x64]
+    env:
+      SOLUTION_NAME:              'Files.slnx'
+      CONFIGURATION:              '${{ matrix.configuration }}'
+      PLATFORM:                   '${{ matrix.platform }}'
+      APPX_BUNDLE_PLATFORMS:      'x64|arm64'
+      WORKING_DIR:                '${{ github.workspace }}' # D:\a\Files\Files\
+      ARTIFACTS_STAGING_DIR:      '${{ github.workspace }}\artifacts'
+      APPX_PACKAGE_DIR:           '${{ github.workspace }}\artifacts\AppxPackages'
+      PACKAGE_PROJECT_DIR:        'src\Files.App (Package)'
+      PACKAGE_PROJECT_PATH:       'src\Files.App (Package)\Files.Package.wapproj'
+      PACKAGE_MANIFEST_PATH:      'src\Files.App (Package)\Package.appxmanifest'
+      LAUNCHER_PROJECT_PATH:      'src\Files.App.Launcher\Files.App.Launcher.vcxproj'
+      TEST_PROJECT_PATH:          'tests\Files.InteractionTests\Files.InteractionTests.csproj'
+      APP_INSTALLER_SIDELOAD_URL: 'https://cdn.files.community/files/stable/'
+
+    steps:
+    - name: Checkout the repository #查看仓库
+      uses: actions/checkout@v4
+    - name: Setup MSBuild #设置 MSBuild
+      uses: microsoft/setup-msbuild@v2
+    - name: Setup NuGet #设置 NuGet
+      uses: NuGet/setup-nuget@v2
+    - name: Setup .NET #设置 .NET
+      uses: actions/setup-dotnet@v4
+      with:
+        global-json-file: global.json
+
+    - name: Configure the package manifest, logo, and secrets #配置包清单、徽标和密钥
+      shell: pwsh
+      run: |
+        . './.github/scripts/Configure-AppxManifest.ps1' `
+          -Branch "SideloadStable" `
+          -PackageManifestPath "$env:PACKAGE_MANIFEST_PATH" `
+          -Publisher "$env:SIDELOAD_PUBLISHER_SECRET" `
+          -WorkingDir "$env:WORKING_DIR" `
+          -SecretBingMapsKey "$env:SECRET_BINGMAPS_KEY" `
+          -SecretSentry "$env:SECRET_SENTRY" `
+          -SecretGitHubOAuthClientId "$env:SECRET_GITHUB_OAUTH_CLIENT_ID"
+      env:
+        SIDELOAD_PUBLISHER_SECRET: ${{ secrets.SIDELOAD_PUBLISHER_SECRET }}
+        SECRET_BINGMAPS_KEY: ${{ secrets.BING_MAPS_SECRET }}
+        SECRET_SENTRY: ${{ secrets.SENTRY_SECRET }}
+        SECRET_GITHUB_OAUTH_CLIENT_ID: ${{ secrets.GH_OAUTH_CLIENT_ID }}
+
+    - name: Extract version from Package.appxmanifest
+      id: extract_manifest_version
+      shell: pwsh
+      run: |
+        $manifestPath = "${{ env.PACKAGE_MANIFEST_PATH }}"
+        $manifest = [xml](Get-Content -Path $manifestPath -Encoding UTF8)
+        $manifestVersion = $manifest.Package.Identity.Version
+        if ([string]::IsNullOrEmpty($manifestVersion)) {
+          throw "Failed to extract version from $manifestPath (Identity/Version node not found)"
+        }
+        $simplifiedVersion = $manifestVersion -replace '\.\d+$', ''
+        $preReleasePrefix = "v$simplifiedVersion-sideload-pre"
+        echo "MANIFEST_VERSION=$manifestVersion" >> $env:GITHUB_ENV
+        echo "PRE_RELEASE_PREFIX=$preReleasePrefix" >> $env:GITHUB_ENV
+        Write-Host "Extracted manifest version: $manifestVersion"
+        Write-Host "Simplified version: $simplifiedVersion"
+        Write-Host "Generated PRE_RELEASE_PREFIX: $preReleasePrefix"
+
+    - name: Define self-signed cert environment variable
+      shell: pwsh
+      run: |
+        $selfSignedCertPath = "${{ env.ARTIFACTS_STAGING_DIR }}\Files_SelfSigned.pfx"
+        echo "SELF_SIGNED_CERT_PATH=$selfSignedCertPath" >> $env:GITHUB_ENV
+
+    - name: Create artifacts directory for self-signed cert
+      shell: pwsh
+      run: |
+        $artifactsDir = "${{ env.ARTIFACTS_STAGING_DIR }}"
+        if (-not (Test-Path -Path $artifactsDir)) {
+           New-Item -Path $artifactsDir -ItemType Directory -Force | Out-Null
+           Write-Host "Successfully created artifacts directory: $artifactsDir"
+        }
+
+    - name: Generate self-signed PFX certificate
+      shell: pwsh
+      run: |
+        $scriptPath = "./.github/scripts/Generate-SelfCertPfx.ps1"
+        if (-not (Test-Path $scriptPath)) {
+          throw "Self-signed cert script not found! Please create $scriptPath first."
+        }
+        & $scriptPath `
+          -Destination "$env:SELF_SIGNED_CERT_PATH" `
+          -ValidityDays 365
+
+    - name: Use Windows SDK Preview
+      shell: cmd
+      run: |
+        for /f %%a in ('dir /b /a:d %localappdata%\Microsoft\VisualStudio\17*') do echo UsePreviews=True>%localappdata%\Microsoft\VisualStudio\%%a\sdk.txt
+
+    - name: Restore Files
+      shell: pwsh
+      run: |
+        msbuild $env:SOLUTION_NAME `
+        -t:Restore `
+        -p:Platform=$env:PLATFORM `
+        -p:Configuration=$env:CONFIGURATION `
+        -p:PublishReadyToRun=true `
+        -v:quiet
+
+    - name: Restore NuGet Packages for Launcher Project
+      shell: pwsh
+      run: |
+        nuget restore "$env:LAUNCHER_PROJECT_PATH" `
+          -SolutionDirectory "$env:WORKING_DIR" `
+          -Verbosity detailed
+    
+    - name: Build launcher project
+      shell: pwsh
+      run: |
+        msbuild "$env:LAUNCHER_PROJECT_PATH" `
+        -t:Build `
+        -p:Platform=$env:PLATFORM `
+        -p:Configuration=$env:CONFIGURATION `
+        -v:quiet
+
+    - name: Build & package Files
+      shell: pwsh
+      run: |
+        msbuild "$env:PACKAGE_PROJECT_PATH" `
+        -t:Build `
+        -t:_GenerateAppxPackage `
+        -p:Platform=$env:PLATFORM `
+        -p:Configuration=$env:CONFIGURATION `
+        -p:AppxBundlePlatforms=$env:APPX_BUNDLE_PLATFORMS `
+        -p:AppxPackageDir="$env:APPX_PACKAGE_DIR" `
+        -p:AppxBundle=Always `
+        -p:UapAppxPackageBuildMode=Sideload `
+        -p:GenerateAppInstallerFile=True `
+        -p:AppInstallerUri=$env:APP_INSTALLER_SIDELOAD_URL `
+        -p:AppxPackageSigningEnabled=true `
+        -p:PackageCertificateKeyFile="$env:SELF_SIGNED_CERT_PATH" `
+        -p:PackageCertificatePassword="$env:SELF_SIGNED_CERT_PWD" `
+        -p:PackageCertificateThumbprint="" `
+        -v:quiet
+
+    - name: Remove empty files from the packages
+      shell: bash
+      run: find $ARTIFACTS_STAGING_DIR -empty -delete
+
+    - name: Update appinstaller schema
+      run: |
+        $newSchema = "http://schemas.microsoft.com/appx/appinstaller/2018"
+        $localFilePath = "${{ env.APPX_PACKAGE_DIR }}/Files.Package.appinstaller"
+        $fileContent = Get-Content $localFilePath
+        $fileContent = $fileContent.Replace("http://schemas.microsoft.com/appx/appinstaller/2017/2", $newSchema)
+        $fileContent | Set-Content $localFilePath
+
+    - name: Verify uncompressed artifacts (MSIX + Appinstaller)
+      id: Verify uncompressed_artifacts
+      shell: pwsh
+      run: |
+        Write-Host "==================== 验证未压缩产物（MSIX + Appinstaller） ===================="
+        $appxDir = "${{ env.APPX_PACKAGE_DIR }}"
+        Write-Host "Appx Package Directory: $appxDir"
+        $msixParentDir = Get-ChildItem -Path $appxDir -Directory -Filter "Files.Package_*_Test" | Select-Object -First 1
+        if (-not $msixParentDir) {
+          throw "未找到包含 MSIX 的子目录（格式：Files.Package_*_Test），路径：$appxDir"
+        }
+        $msixDirPath = $msixParentDir.FullName
+        $msixbundle = Get-ChildItem -Path $msixDirPath -Filter "*.msixbundle" | Select-Object -First 1
+        if (-not $msixbundle) {
+          throw "未在 $msixDirPath 中找到 MSIXbundle 文件"
+        }
+        $msixbundlePath = $msixbundle.FullName
+        $appinstallerPath = "$appxDir\Files.Package.appinstaller"
+        if (-not (Test-Path $appinstallerPath)) {
+          throw "未找到 appinstaller 文件：$appinstallerPath"
+        }
+        echo "msixbundle_path=$msixbundlePath" >> $env:GITHUB_OUTPUT
+        echo "appinstaller_path=$appinstallerPath" >> $env:GITHUB_OUTPUT
+        Write-Host "MSIXbundle 路径：$msixbundlePath"
+        Write-Host "Appinstaller 路径：$appinstallerPath"
+
+    - name: Upload the packages to GitHub Actions
+      uses: actions/upload-artifact@v4
+      with:
+        name: 'Appx Packages (${{ env.CONFIGURATION }}, ${{ env.PLATFORM }})'
+        path: ${{ env.ARTIFACTS_STAGING_DIR }}
+      continue-on-error: false
+
+    - name: Locate Artifacts compressed file (Appx Packages.zip)
+      id: locate_artifacts_zip
+      shell: pwsh
+      run: |
+        Write-Host "==================== 定位 Artifacts 压缩包 ===================="
+        $artifactsDir = "${{ env.ARTIFACTS_STAGING_DIR }}"
+        $targetCompressedName = "Appx Packages (${{ env.CONFIGURATION }}, ${{ env.PLATFORM }}).zip"
+        $compressedPath = Join-Path -Path "$env:RUNNER_TEMP\artifacts" -ChildPath $targetCompressedName
+        if (-not (Test-Path $compressedPath)) {
+          $compressedPath = Join-Path -Path $artifactsDir -ChildPath $targetCompressedName
+          if (-not (Test-Path $compressedPath)) {
+            throw "未找到 Artifacts 压缩包：$targetCompressedName，路径：$compressedPath`n请确认 upload-artifact 步骤是否成功执行"
+          }
+        }
+        $compressedFile = Get-Item $compressedPath
+        $compressedSize = [math]::Round($compressedFile.Length / 1MB, 2)
+        if ($compressedSize -eq 0) {
+          throw "Artifacts 压缩包为空（路径：$compressedPath），可能是上传异常"
+        }
+        echo "compressed_path=$compressedPath" >> $env:GITHUB_OUTPUT
+        echo "compressed_name=$($compressedFile.Name)" >> $env:GITHUB_OUTPUT
+        Write-Host "找到 Artifacts 压缩包：$compressedPath（大小：$compressedSize MB）"
+
+    - name: Generate unique Pre-release version
+      id: get_pre_release_version
+      shell: pwsh
+      run: |
+        $timestamp = Get-Date -Format "yyyyMMdd-HHmmss"
+        $preReleaseVersion = "$env:PRE_RELEASE_PREFIX-$timestamp"
+        echo "pre_release_version=$preReleaseVersion" >> $env:GITHUB_OUTPUT
+        $msixbundlePath = "${{ steps.verify_uncompressed_artifacts.outputs.msixbundle_path }}"
+        $appinstallerPath = "${{ steps.verify_uncompressed_artifacts.outputs.appinstaller_path }}"
+        $compressedPath = "${{ steps.locate_artifacts_zip.outputs.compressed_path }}"
+        $compressedName = "${{ steps.locate_artifacts_zip.outputs.compressed_name }}"
+        if ([string]::IsNullOrEmpty($msixbundlePath) -or [string]::IsNullOrEmpty($appinstallerPath) -or [string]::IsNullOrEmpty($compressedPath)) {
+          throw "产物路径为空（MSIX：$msixbundlePath，Appinstaller：$appinstallerPath，Artifacts 压缩包：$compressedPath）"
+        }
+        echo "msixbundle_path=$msixbundlePath" >> $env:GITHUB_OUTPUT
+        echo "appinstaller_path=$appinstallerPath" >> $env:GITHUB_OUTPUT
+        echo "compressed_path=$compressedPath" >> $env:GITHUB_OUTPUT
+        $renamedCompressedName = "Files-Artifacts-${preReleaseVersion}.zip"
+        echo "renamed_compressed_name=$renamedCompressedName" >> $env:GITHUB_OUTPUT
+        Write-Host "Generated Pre-release version: $preReleaseVersion"
+        Write-Host "MSIXbundle 路径：$msixbundlePath"
+        Write-Host "Appinstaller 路径：$appinstallerPath"
+        Write-Host "Artifacts 压缩包路径：$compressedPath"
+
+    - name: Create GitHub Pre-release
+      id: create_pre_release
+      uses: actions/create-release@v1
+      env:
+        GITHUB_TOKEN: ${{ secrets.GH_PAT }}
+      with:
+        tag_name: ${{ steps.get_pre_release_version.outputs.pre_release_version }}
+        release_name: "Files Sideload Pre-release ${{ steps.get_pre_release_version.outputs.pre_release_version }}"
+        body: |
+          ## 🚀 Files Sideload Pre-release
+          Auto-generated after successful build (sideload stable workflow).
+      
+          ### 📦 Download Assets
+          - **App Installer**: Direct sideload installation
+          - **MSIX Bundle**: x64 + arm64 platforms（关键修改：将 Appx 改为 MSIX）
+          - **Self-signed Cert**: Required for sideload (valid for 365 days)
+          - **Artifacts Compressed File**: Full build outputs (matches GitHub Artifacts: `Appx Packages (Release, x64).zip`)  # 新增压缩包说明
+      
+          ### 🔧 Build Details
+          - Configuration: ${{ env.CONFIGURATION }}
+          - Target Platforms: ${{ env.APPX_BUNDLE_PLATFORMS }}
+          - Build Time: ${{ steps.get_pre_release_version.outputs.pre_release_version }}
+          - R2 CDN Link: [${{ env.APP_INSTALLER_SIDELOAD_URL }}Files.Package.appinstaller](${{ env.APP_INSTALLER_SIDELOAD_URL }}Files.Package.appinstaller)
+      
+          ### ⚠️ Note
+          - The Artifacts compressed file is identical to GitHub Artifacts for offline use.
+          - Install the self-signed cert first before deploying the MSIX bundle.
+        draft: false
+        prerelease: true
+        target_commitish: ${{ github.ref_name }}
+      
+    - name: Upload Appinstaller to Pre-release
+      uses: actions/upload-release-asset@v1
+      env:
+        GITHUB_TOKEN: ${{ secrets.GH_PAT }}
+      with:
+        upload_url: ${{ steps.create_pre_release.outputs.upload_url }}
+        asset_path: ${{ steps.get_pre_release_version.outputs.appinstaller_path }}
+        asset_name: Files.Package-${{ steps.get_pre_release_version.outputs.pre_release_version }}.appinstaller
+        asset_content_type: application/xml
+      continue-on-error: false
+
+    - name: Upload MSIXbundle to Pre-release
+      uses: actions/upload-release-asset@v1
+      env:
+        GITHUB_TOKEN: ${{ secrets.GH_PAT }}
+      with:
+        upload_url: ${{ steps.create_pre_release.outputs.upload_url }}
+        asset_path: ${{ steps.get_pre_release_version.outputs.msixbundle_path }}
+        asset_name: Files.Package-${{ steps.get_pre_release_version.outputs.pre_release_version }}.msixbundle
+        asset_content_type: application/vnd.microsoft.msixbundle
+      continue-on-error: false
+
+    - name: Upload Self-signed Cert to Pre-release
+      uses: actions/upload-release-asset@v1
+      env:
+        GITHUB_TOKEN: ${{ secrets.GH_PAT }}
+      with:
+        upload_url: ${{ steps.create_pre_release.outputs.upload_url }}
+        asset_path: ${{ env.SELF_SIGNED_CERT_PATH }}
+        asset_name: Files_SelfSigned-${{ steps.get_pre_release_version.outputs.pre_release_version }}.pfx
+        asset_content_type: application/x-pkcs12
+
+    - name: Upload Artifacts Compressed File to Pre-release
+      uses: actions/upload-release-asset@v1
+      env:
+        GITHUB_TOKEN: ${{ secrets.GH_PAT }}
+      with:
+        upload_url: ${{ steps.create_pre_release.outputs.upload_url }}
+        asset_path: ${{ steps.get_pre_release_version.outputs.compressed_path }}
+        asset_name: ${{ steps.get_pre_release_version.outputs.renamed_compressed_name }}
+        asset_content_type: application/zip
+      continue-on-error: false
+
+    - name: Clean up old Pre-releases
+      id: clean_old_pre_releases
+      shell: pwsh
+      env:
+        GH_PAT: ${{ secrets.GH_PAT }}
+        KEEP_LATEST_PRE_RELEASES: 5
+        REPO_OWNER: ${{ github.repository_owner }}
+        REPO_NAME: ${{ github.event.repository.name }}
+      run: |
+        Write-Host "Starting clean-up of old Pre-releases (keep latest $env:KEEP_LATEST_PRE_RELEASES)"
+        $apiUrl = "https://api.github.com/repos/$env:REPO_OWNER/$env:REPO_NAME/releases?per_page=100&page=1"
+        $headers = @{
+          "Authorization" = "Bearer $env:GH_PAT"
+          "Accept" = "application/vnd.github+json"
+          "X-GitHub-Api-Version" = "2022-11-28"
+        }
+        try {
+          $releases = Invoke-RestMethod -Uri $apiUrl -Headers $headers -Method Get -ErrorAction Stop
+        }
+        catch {
+          throw "Failed to fetch releases: $($_.Exception.Response.StatusDescription)"
+        }
+        $preReleases = $releases | Where-Object { $_.prerelease -eq $true -and $_.draft -eq $false }
+        Write-Host "Found total $($preReleases.Count) Pre-releases"
+        if ($preReleases.Count -le $env:KEEP_LATEST_PRE_RELEASES) {
+          Write-Host "No clean-up needed (Pre-releases count $($preReleases.Count) ≤ $env:KEEP_LATEST_PRE_RELEASES)"
+          exit 0
+        }
+        $releasesToDelete = $preReleases | Sort-Object -Property created_at -Descending | Select-Object -Skip $env:KEEP_LATEST_PRE_RELEASES
+        Write-Host "Will delete $($releasesToDelete.Count) old Pre-releases (keep latest $env:KEEP_LATEST_PRE_RELEASES)"
+        foreach ($release in $releasesToDelete) {
+          $releaseId = $release.id
+          $releaseTag = $release.tag_name
+          Write-Host "Deleting Pre-release: $releaseTag (ID: $releaseId)"
+          $deleteReleaseUrl = "https://api.github.com/repos/$env:REPO_OWNER/$env:REPO_NAME/releases/$releaseId"
+          Invoke-RestMethod -Uri $deleteReleaseUrl -Headers $headers -Method Delete -ErrorAction Stop
+          $deleteTagUrl = "https://api.github.com/repos/$env:REPO_OWNER/$env:REPO_NAME/git/refs/tags/$releaseTag"
+          Invoke-RestMethod -Uri $deleteTagUrl -Headers $headers -Method Delete -ErrorAction SilentlyContinue
+      
+          Write-Host "Deleted Pre-release and Tag: $releaseTag"
+        }
+        Write-Host "Clean-up completed successfully (deleted $($releasesToDelete.Count) old Pre-releases)"
