@@ -21,8 +21,10 @@ jobs:
       - name: Get latest commit SHA from target repo
         id: get_latest_sha
         run: |
+          # 安装 jq 工具（用于解析 JSON 响应）
+          sudo apt-get update && sudo apt-get install -y jq
           # ！！核心修改点1：替换为你的「目标仓库」地址（需检测更新的仓库）
-          TARGET_REPO="https://api.github.com/repos/files-community/Files/commits/main "
+          TARGET_REPO="files-community/Files"
           # ！！核心修改点2：替换为目标仓库的「目标分支」（如 main、dev）
           TARGET_BRANCH="main"
           
