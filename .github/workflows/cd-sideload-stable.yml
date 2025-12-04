@@ -162,19 +162,20 @@ jobs:
         $fileContent = $fileContent.Replace("http://schemas.microsoft.com/appx/appinstaller/2017/2", $newSchema)
         $fileContent | Set-Content $localFilePath
 
-    - name: Upload packages to Cloudflare
-      uses: ryand56/r2-upload-action@latest
-      with:
-        r2-account-id: ${{ secrets.R2_ACCOUNT_ID }}
-        r2-access-key-id: ${{ secrets.R2_ACCESS_KEY_ID }}
-        r2-secret-access-key: ${{ secrets.R2_SECRET_ACCESS_KEY }}
-        r2-bucket: ${{ secrets.R2_BUCKET }}
-        source-dir: ${{ env.APPX_PACKAGE_DIR }}
-        destination-dir: ./files/stable
+    #- name: Upload packages to Cloudflare
+    #  uses: ryand56/r2-upload-action@latest
+    #  with:
+    #    r2-account-id: ${{ secrets.R2_ACCOUNT_ID }}
+    #    r2-access-key-id: ${{ secrets.R2_ACCESS_KEY_ID }}
+    #    r2-secret-access-key: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+    #    r2-bucket: ${{ secrets.R2_BUCKET }}
+    #    source-dir: ${{ env.APPX_PACKAGE_DIR }}
+    #    destination-dir: ./files/stable
           
     - name: Upload the packages to GitHub Actions
       uses: actions/upload-artifact@v4
       with:
         name: 'Appx Packages (${{ env.CONFIGURATION }}, ${{ env.PLATFORM }})'
         path: ${{ env.ARTIFACTS_STAGING_DIR }}
+
 
