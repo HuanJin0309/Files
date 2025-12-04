@@ -40,8 +40,8 @@ jobs:
       TEST_PROJECT_PATH:          'tests\Files.InteractionTests\Files.InteractionTests.csproj'
       APP_INSTALLER_SIDELOAD_URL: 'https://cdn.files.community/files/stable/'
       # 证书路径统一定义（避免重复写路径）
-      SELF_SIGNED_PFX_PATH:       'Files_SelfSigned.pfx'
-      SELF_SIGNED_CER_PATH:       'Files_SelfSigned.cer'
+      SELF_SIGNED_PFX_FILENAME:       'Files_SelfSigned.pfx'
+      SELF_SIGNED_CER_FILENAME:       'Files_SelfSigned.cer'
 
     steps:
     - name: Checkout the repository
