@@ -40,8 +40,8 @@ jobs:
       TEST_PROJECT_PATH:          'tests\Files.InteractionTests\Files.InteractionTests.csproj'
       APP_INSTALLER_SIDELOAD_URL: 'https://cdn.files.community/files/stable/'
       # 证书路径统一定义（避免重复写路径）
-      SELF_SIGNED_PFX_PATH:       '${{ github.workspace }}\Files_SelfSigned.pfx'
-      SELF_SIGNED_CER_PATH:       '${{ github.workspace }}\Files_SelfSigned.cer'
+      SELF_SIGNED_PFX_PATH:       'Files_SelfSigned.pfx'
+      SELF_SIGNED_CER_PATH:       'Files_SelfSigned.cer'
 
     steps:
     - name: Checkout the repository
@@ -90,25 +90,43 @@ jobs:
         Write-Host "Extracted version: $manifestVersion → Pre-release prefix: $preReleasePrefix"
 
     - name: Generate self-signed cert (PFX → CER)
+      id: generate_cert
       shell: pwsh
       run: |
-        if (-not (Test-Path $env:ARTIFACTS_STAGING_DIR)) {
-          New-Item -Path $env:ARTIFACTS_STAGING_DIR -ItemType Directory -Force | Out-Null
-          Write-Host "Created Artifacts directory: $env:ARTIFACTS_STAGING_DIR"
+        $pfxFullPath = Join-Path -Path "${{ env.ARTIFACTS_STAGING_DIR }}" -ChildPath "${{ env.SELF_SIGNED_PFX_FILENAME }}"
+        $cerFullPath = Join-Path -Path "${{ env.ARTIFACTS_STAGING_DIR }}" -ChildPath "${{ env.SELF_SIGNED_CER_FILENAME }}"
+        if (-not (Test-Path "${{ env.ARTIFACTS_STAGING_DIR }}")) {
+          New-Item -Path "${{ env.ARTIFACTS_STAGING_DIR }}" -ItemType Directory -Force | Out-Null
         }
         $certScript = "./.github/scripts/Generate-SelfCertPfx.ps1"
-        if (-not (Test-Path $certScript)) {
-          throw "Self-signed cert script missing: $certScript"
+        if (-not (Test-Path $certScript)) { throw "Cert script missing: $certScript" }
+        & $certScript -Destination "$pfxFullPath" -ValidityDays 365
+        $pfxCert = New-Object System.Security.Cryptography.X509Certificates.X509Certificate2($pfxFullPath, "", [System.Security.Cryptography.X509Certificates.X509KeyStorageFlags]::Exportable)
+        [System.IO.File]::WriteAllBytes($cerFullPath, $pfxCert.Export([System.Security.Cryptography.X509Certificates.X509ContentType]::Cert))
+        if (-not (Test-Path $pfxFullPath) -or (Get-Item $pfxFullPath).Length -eq 0) { throw "PFX generation failed: $pfxFullPath" }
+        if (-not (Test-Path $cerFullPath) -or (Get-Item $cerFullPath).Length -eq 0) { throw "CER generation failed: $cerFullPath" }
+        echo "pfx_full_path=$pfxFullPath" >> $env:GITHUB_OUTPUT
+        echo "cer_full_path=$cerFullPath" >> $env:GITHUB_OUTPUT
+        Write-Host "Generated certs: PFX($pfxFullPath) | CER($cerFullPath)"
+
+    - name: Verify dynamic cert paths (debug)
+      shell: pwsh
+      run: |
+        Write-Host "==================== 验证动态生成的证书路径 ===================="
+        Write-Host "PFX full path (from step output): ${{ steps.generate_cert.outputs.pfx_full_path }}"
+        Write-Host "CER full path (from step output): ${{ steps.generate_cert.outputs.cer_full_path }}"
+        Write-Host "PFX full path (from global env): $env:PFX_FULL_PATH"
+        Write-Host "CER full path (from global env): $env:CER_FULL_PATH"
+        if (Test-Path "${{ steps.generate_cert.outputs.pfx_full_path }}") {
+          Write-Host "PFX file exists"
+        } else {
+          throw "PFX file missing: ${{ steps.generate_cert.outputs.pfx_full_path }}"
         }
-        & $certScript -Destination "$env:SELF_SIGNED_PFX_PATH" -ValidityDays 365
-        $pfxCert = New-Object System.Security.Cryptography.X509Certificates.X509Certificate2(
-          $env:SELF_SIGNED_PFX_PATH, "", [System.Security.Cryptography.X509Certificates.X509KeyStorageFlags]::Exportable
-        )
-        [System.IO.File]::WriteAllBytes($env:SELF_SIGNED_CER_PATH, $pfxCert.Export([System.Security.Cryptography.X509Certificates.X509ContentType]::Cert))
-        if (-not (Test-Path $env:SELF_SIGNED_CER_PATH) -or (Get-Item $env:SELF_SIGNED_CER_PATH).Length -eq 0) {
-          throw "CER cert generation failed: $env:SELF_SIGNED_CER_PATH"
+        if (Test-Path "${{ steps.generate_cert.outputs.cer_full_path }}") {
+          Write-Host "CER file exists"
+        } else {
+          throw "CER file missing: ${{ steps.generate_cert.outputs.cer_full_path }}"
         }
-        Write-Host "Generated certs: PFX($env:SELF_SIGNED_PFX_PATH) | CER($env:SELF_SIGNED_CER_PATH)"
 
     - name: Use Windows SDK Preview
       shell: cmd
@@ -156,10 +174,17 @@ jobs:
         -p:GenerateAppInstallerFile=True `
         -p:AppInstallerUri=$env:APP_INSTALLER_SIDELOAD_URL `
         -p:AppxPackageSigningEnabled=true `
-        -p:PackageCertificateKeyFile="$env:SELF_SIGNED_PFX_PATH" `
+        -p:PackageCertificateKeyFile="${{ steps.generate_cert.outputs.pfx_full_path }}" `
         -p:PackageCertificatePassword="" `
         -p:PackageCertificateThumbprint="" `
         -v:quiet
+
+        #(debug)
+        $msixBundlePath = Get-ChildItem -Path "$env:APPX_PACKAGE_DIR" -Filter "*.msixbundle" -Recurse | Select-Object -First 1
+        if (-not $msixBundlePath) {
+          throw "MSIXbundle not found after build: $env:APPX_PACKAGE_DIR"
+        }
+        Write-Host "Built & signed MSIXbundle: $($msixBundlePath.FullName)"
 
     - name: Remove empty files from the packages
       shell: bash
@@ -276,7 +301,7 @@ jobs:
         GITHUB_TOKEN: ${{ secrets.GH_PAT }}
       with:
         upload_url:    ${{ steps.create_pre_release.outputs.upload_url }}
-        asset_path:    ${{ env.SELF_SIGNED_CER_PATH }}
+        asset_path:    ${{ steps.generate_cert.outputs.cer_full_path }}
         asset_name:    "Files_SelfSigned-${{ steps.get_pre_release_version.outputs.pre_release_version }}.cer"
         asset_content_type: application/x-x509-ca-cert
       continue-on-error: false
@@ -303,5 +328,4 @@ jobs:
           Invoke-RestMethod -Uri "https://api.github.com/repos/$env:REPO/git/refs/tags/$($_.tag_name)" `
             -Headers @{ Authorization = "Bearer $env:GH_PAT" } -Method Delete -ErrorAction SilentlyContinue
         }
-
         Write-Host "Cleaned up $($preReleases.Count - $env:KEEP_LATEST) old Pre-releases"
