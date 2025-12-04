@@ -23,7 +23,8 @@ $cert = New-SelfSignedCertificate `
     -CertStoreLocation $CertStoreLocation `
     -NotAfter (Get-Date).AddDays($ValidityDays) `
     -TextExtension @(
-        "2.5.29.37={text}1.3.6.1.5.5.7.3.3"
+        "2.5.29.37={text}1.3.6.1.5.5.7.3.3",
+        "2.5.29.19={text}CA=false"
     )
 
 # 步骤3：保留原有的证书导出逻辑（无需修改）
