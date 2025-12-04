@@ -40,8 +40,8 @@ jobs:
       TEST_PROJECT_PATH:          'tests\Files.InteractionTests\Files.InteractionTests.csproj'
       APP_INSTALLER_SIDELOAD_URL: 'https://cdn.files.community/files/stable/'
       # 证书路径统一定义（避免重复写路径）
-      SELF_SIGNED_PFX_PATH:       '${ARTIFACTS_STAGING_DIR}\Files_SelfSigned.pfx'
-      SELF_SIGNED_CER_PATH:       '${ARTIFACTS_STAGING_DIR}\Files_SelfSigned.cer'
+      SELF_SIGNED_PFX_PATH:       '${{ github.workspace }}\Files_SelfSigned.pfx'
+      SELF_SIGNED_CER_PATH:       '${{ github.workspace }}\Files_SelfSigned.cer'
 
     steps:
     - name: Checkout the repository
@@ -303,4 +303,5 @@ jobs:
           Invoke-RestMethod -Uri "https://api.github.com/repos/$env:REPO/git/refs/tags/$($_.tag_name)" `
             -Headers @{ Authorization = "Bearer $env:GH_PAT" } -Method Delete -ErrorAction SilentlyContinue
         }
+
         Write-Host "Cleaned up $($preReleases.Count - $env:KEEP_LATEST) old Pre-releases"
