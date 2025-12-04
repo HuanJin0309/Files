@@ -3,34 +3,21 @@
 # Abstract:
 #  This script generates a self-signed certificate for the temporary packaging as a pfx file.
 
-# 步骤1：修改 param() 块，补充 CI 调用时用到的 -Subject 和 -ValidityDays 参数
 param(
-    # 原有必选参数：证书输出路径（CI 中通过 -Destination 传入）
-    [Parameter(Mandatory=$true)]  # 标记为必选，避免未传路径导致报错
+    # 仅保留必要参数：输出路径、有效期（有效期仍可通过CI传递，不影响）
+    [Parameter(Mandatory=$true)]
     [string]$Destination = "",
-
-    # 新增参数1：证书主题（CI 中通过 -Subject "CN=Files Sideload Test" 传入）
-    # 默认值设为原脚本的 "CN=Files"，保持兼容性
-    [string]$Subject = "CN=Files",
-
-    # 新增参数2：证书有效期（天数，CI 中通过 -ValidityDays 365 传入）
-    # 默认值设为 30 天（测试用推荐短期，避免长期风险）
-    [int]$ValidityDays = 30
+    [int]$ValidityDays = 365
 )
 
 # 完整正确的证书生成逻辑
 $CertFriendlyName = "FilesApp_SelfSigned"
 $CertStoreLocation = "Cert:\CurrentUser\My"
 
-# 新增：强制验证 $Subject 是否非空，为空则抛出明确错误
-if ([string]::IsNullOrEmpty($Subject)) {
-    throw "Error: Subject parameter is empty! Check CI parameter passing or script default value. Current Subject: '$Subject'"
-}
-
 $cert = New-SelfSignedCertificate `
-    -Type CodeSigningCert `  # 推荐用 CodeSigningCert，兼容性更好
-    -Subject $Subject `
-    -KeyUsage DigitalSignature `  # 格式正确，反引号衔接
+    -Type CodeSigningCert `
+    -Subject "CN=Files" `  # 硬编码，100%非空，无需依赖变量
+    -KeyUsage DigitalSignature `
     -FriendlyName $CertFriendlyName `
     -CertStoreLocation $CertStoreLocation `
     -NotAfter (Get-Date).AddDays($ValidityDays)
