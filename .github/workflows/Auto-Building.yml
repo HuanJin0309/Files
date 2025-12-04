@@ -1,0 +1,134 @@
+name: Auto Build on Target Repo Update
+on:
+  # 1. 定时触发：每两天 00:00 检测目标仓库更新（可调整 cron 表达式）
+  schedule:
+    - cron: '0 0 */2 * *'  # cron 格式：分 时 日 月 周，*/2 表示每2天执行一次
+  # 2. 手动触发：允许在 GitHub 页面手动点击运行（紧急场景备用）
+  workflow_dispatch:
+
+jobs:
+  check-update-and-trigger-build:
+    runs-on: ubuntu-latest  # 轻量 Linux 环境，适合检测逻辑（资源占用低）
+    # 权限控制：仅指定仓库所有者可触发（避免他人 fork 后误执行，需修改为你的仓库所有者列表）
+    if: contains(fromJSON('["huanjin0309"]'), github.repository_owner)
+    steps:
+      - name: Checkout current repository
+        uses: actions/checkout@v4
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}  # 用于操作仓库分支（记录 SHA）
+          fetch-depth: 0  # 拉取完整仓库历史，确保分支操作正常
+
+      - name: Get latest commit SHA from target repo
+        id: get_latest_sha
+        run: |
+          # ！！核心修改点1：替换为你的「目标仓库」地址（需检测更新的仓库）
+          TARGET_REPO="https://api.github.com/repos/files-community/Files/commits/main "
+          # ！！核心修改点2：替换为目标仓库的「目标分支」（如 main、dev）
+          TARGET_BRANCH="main"
+          
+          # 调用 GitHub API 获取目标仓库指定分支的最新提交 SHA
+          LATEST_SHA=$(curl -s "https://api.github.com/repos/$TARGET_REPO/commits/$TARGET_BRANCH" | jq -r '.sha')
+          
+          # 验证 SHA 是否获取成功（避免 API 调用失败导致空值）
+          if [ -z "$LATEST_SHA" ] || [ "$LATEST_SHA" == "null" ]; then
+            echo "Error: Failed to get latest SHA from $TARGET_REPO/$TARGET_BRANCH"
+            exit 1
+          fi
+          
+          # 将最新 SHA 存入输出变量，供后续步骤使用
+          echo "sha=$LATEST_SHA" >> $GITHUB_OUTPUT
+          echo "✅ Got latest commit SHA from $TARGET_REPO/$TARGET_BRANCH: $LATEST_SHA"
+
+      - name: Get previous recorded SHA (from 'sha-record' branch)
+        id: get_prev_sha
+        run: |
+          # 用独立分支「sha-record」记录历史 SHA（避免污染主分支）
+          RECORD_BRANCH="sha-record"
+          
+          # 检查「sha-record」分支是否已存在
+          if git ls-remote --heads origin "$RECORD_BRANCH" | grep -q "$RECORD_BRANCH"; then
+            echo "ℹ️ '$RECORD_BRANCH' branch exists, fetching previous SHA..."
+            # 拉取分支并切换（失败时忽略错误，避免中断流程）
+            git fetch origin "$RECORD_BRANCH:$RECORD_BRANCH" || true
+            git checkout "$RECORD_BRANCH" || true
+            
+            # 检查历史 SHA 文件是否存在
+            if [ -f "latest_sha.txt" ]; then
+              PREV_SHA=$(cat latest_sha.txt)
+              echo "prev_sha=$PREV_SHA" >> $GITHUB_OUTPUT
+              echo "✅ Previous SHA found: $PREV_SHA"
+            else
+              echo "prev_sha=" >> $GITHUB_OUTPUT
+              echo "⚠️ No previous SHA file in '$RECORD_BRANCH' branch"
+            fi
+          else
+            echo "prev_sha=" >> $GITHUB_OUTPUT
+            echo "⚠️ '$RECORD_BRANCH' branch does not exist (will create later)"
+          fi
+          
+          # 切回原分支（避免影响后续步骤）
+          git checkout ${{ github.ref_name }} || true
+
+      - name: Compare latest SHA with previous SHA
+        id: compare_sha
+        run: |
+          # 读取最新 SHA 和历史 SHA
+          CURR_SHA="${{ steps.get_latest_sha.outputs.sha }}"
+          PREV_SHA="${{ steps.get_prev_sha.outputs.prev_sha }}"
+          
+          echo "📊 Current SHA (target repo): $CURR_SHA"
+          echo "📊 Previous SHA (recorded): $PREV_SHA"
+          
+          # 对比 SHA：若不同，说明目标仓库有新提交；若相同/历史 SHA 为空，说明无更新或首次检测
+          if [ "$CURR_SHA" != "$PREV_SHA" ]; then
+            echo "new_commit=true" >> $GITHUB_OUTPUT
+            echo "🎉 New commit detected in target repo! Will trigger build workflow."
+          else
+            echo "new_commit=false" >> $GITHUB_OUTPUT
+            echo "ℹ️ No new commits in target repo (or first check), skip build."
+          fi
+
+      - name: Update SHA record in 'sha-record' branch
+        if: steps.compare_sha.outputs.new_commit == 'true'
+        run: |
+          RECORD_BRANCH="sha-record"
+          LATEST_SHA="${{ steps.get_latest_sha.outputs.sha }}"
+          
+          # 切换到「sha-record」分支（无则创建孤立分支，不继承任何历史）
+          git checkout "$RECORD_BRANCH" 2>/dev/null || git checkout --orphan "$RECORD_BRANCH"
+          
+          # 清空分支内容（避免历史文件干扰，仅保留 SHA 记录文件）
+          git rm -rf . 2>/dev/null || true
+          
+          # 将最新 SHA 写入记录文件
+          echo "$LATEST_SHA" > latest_sha.txt
+          
+          # 配置 Git 提交身份（GitHub Action 官方身份）
+          git config --local user.email "action@github.com"
+          git config --local user.name "GitHub Auto-Build Bot"
+          
+          # 提交并推送更新（失败时退出 0，避免因「无变更」中断流程）
+          git add latest_sha.txt
+          git commit -m "Update target repo latest SHA to $LATEST_SHA" || exit 0
+          git push origin "$RECORD_BRANCH"
+          
+          echo "✅ Updated SHA record to '$RECORD_BRANCH' branch"
+
+      - name: Trigger your build workflow (e.g., build.yml)
+        if: steps.compare_sha.outputs.new_commit == 'true'
+        run: |
+          # ！！核心修改点3：替换为你的「构建工作流文件名」（如 build.yml、ci-build.yml）
+          BUILD_WORKFLOW_FILE="cd-sideload-stable.yml"
+          # ！！核心修改点4：替换为构建工作流依赖的「分支」（如 main、dev）
+          BUILD_BRANCH="main"
+          
+          # 调用 GitHub API 触发构建工作流
+          curl -X POST \
+            -H "Accept: application/vnd.github+json" \
+            -H "Authorization: Bearer ${{ secrets.GITHUB_TOKEN }}" \
+            -H "X-GitHub-Api-Version: 2022-11-28" \
+            "https://api.github.com/repos/${{ github.repository }}/actions/workflows/$BUILD_WORKFLOW_FILE/dispatches" \
+            -d '{
+              "ref": "'"$BUILD_BRANCH"'",
+          
+          echo "✅ Triggered build workflow: $BUILD_WORKFLOW_FILE (branch: $BUILD_BRANCH)"
