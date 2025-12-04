@@ -177,7 +177,7 @@ jobs:
         $fileContent | Set-Content $localFilePath
 
     - name: Verify uncompressed artifacts (MSIX + Appinstaller)
-      id: Verify uncompressed_artifacts
+      id: Verify_uncompressed_artifacts
       shell: pwsh
       run: |
         Write-Host "==================== 验证未压缩产物（MSIX + Appinstaller） ===================="
@@ -371,4 +371,5 @@ jobs:
       
           Write-Host "Deleted Pre-release and Tag: $releaseTag"
         }
+
         Write-Host "Clean-up completed successfully (deleted $($releasesToDelete.Count) old Pre-releases)"
