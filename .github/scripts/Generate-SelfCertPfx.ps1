@@ -30,10 +30,6 @@ $cert = New-SelfSignedCertificate `
     -CertStoreLocation $CertStoreLocation `
     -NotAfter (Get-Date).AddDays($ValidityDays)
 
-# 后续证书导出逻辑（保留不变）
-$certificateBytes = $cert.Export([System.Security.Cryptography.X509Certificates.X509ContentType]::Pkcs12)
-[System.IO.File]::WriteAllBytes($Destination, $certificateBytes)
-
 # 步骤3：保留原有的证书导出逻辑（无需修改）
 # 获取证书的字节流（PKCS12 格式，即 PFX 格式）
 $certificateBytes = $cert.Export([System.Security.Cryptography.X509Certificates.X509ContentType]::Pkcs12)
