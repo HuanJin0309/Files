@@ -79,7 +79,7 @@ jobs:
     
         # 提取 Identity 节点下的 Version 属性（如：4.0.21.0）
         $manifestVersion = $manifest.Package.Identity.Version
-        if (-z $manifestVersion) {
+        if ([string]::IsNullOrEmpty($manifestVersion)) {
           throw "❌ Failed to extract version from $manifestPath (Identity/Version node not found)"
         }
     
@@ -219,6 +219,21 @@ jobs:
         Write-Host "✅ 压缩包名称：$zipName"
         Write-Host "✅ 压缩包大小：$zipSize MB（确认非空）"
 
+        Write-Host "`n==================== 3. 验证独立 msixbundle 文件 ===================="
+        # 关键修改：从匹配 .appx 改为匹配 .msixbundle
+        $msixbundlePath = "$appxDir\Files.Package.msixbundle"
+        if (Test-Path $msixbundlePath) {
+          $msixbundleSize = [math]::Round((Get-Item $msixbundlePath).Length / 1MB, 2)
+          if ($msixbundleSize -eq 0) {
+            throw "❌ 独立 msixbundle 文件为空（路径：$msixbundlePath）"
+          }
+          echo "independent_msixbundle_path=$msixbundlePath" >> $env:GITHUB_OUTPUT
+          Write-Host "✅ 独立 msixbundle 文件存在：$msixbundlePath（大小：$msixbundleSize MB）"
+        } else {
+          Write-Host "⚠️ 未找到独立 msixbundle 文件，后续需从 Zip 压缩包中提取"
+          echo "independent_msixbundle_path=" >> $env:GITHUB_OUTPUT
+        }
+
         Write-Host "`n==================== 3. 验证独立 appinstaller 文件 ===================="
         # 确认独立 appinstaller 文件是否存在（部分场景下会被打包进 Zip，需提前判断）
         $appinstallerPath = "$appxDir\Files.Package.appinstaller"
@@ -266,17 +281,18 @@ jobs:
           throw "❌ 解压 Zip 压缩包失败：$($_.Exception.Message)（路径：$zipPath）"
         }
 
-        # 3. 验证解压结果（确保提取出 appinstaller 和 Appx 包）
+        # 3. 验证解压结果
         Write-Host "`n==================== 验证解压结果 ===================="
         # 提取 appinstaller（从解压目录中递归查找）
+        $extractedMsixbundle = Get-ChildItem -Path $extractDir -Filter "Files.Package.msixbundle" -Recurse | Select-Object -First 1
+        if (-not $extractedMsixbundle) {
+          throw "❌ 从 Zip 中未提取到 msixbundle 文件（解压目录：$extractDir）"
+        }
+
+        # 提取 x64 平台 Appx 包（旁加载核心产物）
         $extractedAppinstaller = Get-ChildItem -Path $extractDir -Filter "Files.Package.appinstaller" -Recurse | Select-Object -First 1
         if (-not $extractedAppinstaller) {
           throw "❌ 从 Zip 中未提取到 appinstaller 文件（解压目录：$extractDir）"
-        }
-        # 提取 x64 平台 Appx 包（旁加载核心产物）
-        $extractedX64Appx = Get-ChildItem -Path $extractDir -Filter "*_x64.appx" -Recurse | Select-Object -First 1
-        if (-not $extractedX64Appx) {
-          throw "❌ 从 Zip 中未提取到 x64 平台 Appx 包（解压目录：$extractDir）"
         }
 
         # 4. 输出解压后的关键文件路径（供后续 Pre-release 上传使用）
@@ -300,50 +316,48 @@ jobs:
         # 输出版本号到变量，供后续步骤使用
         echo "pre_release_version=$preReleaseVersion" >> $env:GITHUB_OUTPUT
 
-        # 1. 从解压步骤获取 appinstaller 路径（优先使用解压后的完整文件）
+        # 关键修改：传递 MSIX 和 appinstaller 路径（删除原 appx 相关变量）
+        $extractedMsixbundlePath = "${{ steps.extract_zip_bundle.outputs.extracted_msixbundle_path }}"
         $extractedAppinstallerPath = "${{ steps.extract_zip_bundle.outputs.extracted_appinstaller_path }}"
-        echo "extracted_appinstaller_path=$extractedAppinstallerPath" >> $env:GITHUB_OUTPUT
-        # 2. 从解压步骤获取 x64 Appx 路径
-        $extractedX64AppxPath = "${{ steps.extract_zip_bundle.outputs.extracted_x64_appx_path }}"
-        echo "extracted_x64_appx_path=$extractedX64AppxPath" >> $env:GITHUB_OUTPUT
-        # 3. 从第一步获取原始 Zip 压缩包路径（可选：如需上传原压缩包）
         $originalZipPath = "${{ steps.verify_and_locate_bundle.outputs.zip_bundle_path }}"
         $originalZipName = "${{ steps.verify_and_locate_bundle.outputs.zip_bundle_name }}"
+
+        echo "extracted_msixbundle_path=$extractedMsixbundlePath" >> $env:GITHUB_OUTPUT
+        echo "extracted_appinstaller_path=$extractedAppinstallerPath" >> $env:GITHUB_OUTPUT
         echo "original_zip_path=$originalZipPath" >> $env:GITHUB_OUTPUT
         echo "original_zip_name=$originalZipName" >> $env:GITHUB_OUTPUT
 
-        # ---------------------- 保留原日志输出 ----------------------
+        # 日志输出（明确 MSIX 路径）
         Write-Host "✅ Generated Pre-release version: $preReleaseVersion"
-        Write-Host "✅ Extracted appinstaller path: $extractedAppinstallerPath"
-        Write-Host "✅ Extracted x64 Appx path: $extractedX64AppxPath"
+        Write-Host "✅ Extracted MSIXbundle path: $extractedMsixbundlePath"
+        Write-Host "✅ Extracted Appinstaller path: $extractedAppinstallerPath"
         Write-Host "✅ Original Zip bundle path: $originalZipPath"
 
     - name: Create GitHub Pre-release
       id: create_pre_release
       uses: actions/create-release@v1
       env:
-        # 关键：使用 PAT 而非默认 GITHUB_TOKEN（默认 Token 无创建 Release 权限）
         GITHUB_TOKEN: ${{ secrets.GH_PAT }}
       with:
-        tag_name: ${{ steps.get_pre_release_version.outputs.pre_release_version }} # 用版本号作为 Tag（唯一）
-        release_name: "Files Sideload Pre-release ${{ steps.get_pre_release_version.outputs.pre_release_version }}" # Release 显示名
+        tag_name: ${{ steps.get_pre_release_version.outputs.pre_release_version }}
+        release_name: "Files Sideload Pre-release ${{ steps.get_pre_release_version.outputs.pre_release_version }}"
         body: |
           ## 🚀 Files Sideload Pre-release
           Auto-generated after successful build (sideload stable workflow).
-          
+      
           ### 📦 Download Assets
           - **App Installer**: Direct sideload installation
-          - **Appx Bundle**: x64 + arm64 platforms
+          - **MSIX Bundle**: x64 + arm64 platforms（关键修改：将 Appx 改为 MSIX）
           - **Self-signed Cert**: Required for sideload (valid for 365 days)
-          
+      
           ### 🔧 Build Details
           - Configuration: ${{ env.CONFIGURATION }}
           - Target Platforms: ${{ env.APPX_BUNDLE_PLATFORMS }}
           - Build Time: ${{ steps.get_pre_release_version.outputs.pre_release_version }}
           - R2 CDN Link: [${{ env.APP_INSTALLER_SIDELOAD_URL }}Files.Package.appinstaller](${{ env.APP_INSTALLER_SIDELOAD_URL }}Files.Package.appinstaller)
-        draft: false # 不设为草稿，直接发布
-        prerelease: true # 标记为 Pre-release（预发布）
-        target_commitish: ${{ github.ref_name }} # 关联当前触发分支（如 main）
+        draft: false
+        prerelease: true
+        target_commitish: ${{ github.ref_name }}
       
     - name: Upload Appinstaller to Pre-release
       uses: actions/upload-release-asset@v1
@@ -355,6 +369,18 @@ jobs:
         # 资产显示名（含版本号，避免与历史版本混淆）
         asset_name: Files.Package-${{ steps.get_pre_release_version.outputs.pre_release_version }}.appinstaller
         asset_content_type: application/xml  # 正确的 MIME 类型，确保 GitHub 识别
+      continue-on-error: false  # 上传失败立即中断，便于查看错误日志
+
+    - name: Upload MSIXbundle to Pre-release
+      uses: actions/upload-release-asset@v1
+      env:
+        GITHUB_TOKEN: ${{ secrets.GH_PAT }}
+      with:
+        upload_url: ${{ steps.create_pre_release.outputs.upload_url }}
+        asset_path: ${{ steps.get_pre_release_version.outputs.extracted_msixbundle_path }}
+        # 资产显示名（含版本号，避免与历史版本混淆）
+        asset_name: Files.Package-${{ steps.get_pre_release_version.outputs.pre_release_version }}.msixbundle
+        asset_content_type: application/vnd.microsoft.msixbundle  # MSIXbundle 文件的标准 MIME 类型
       continue-on-error: false  # 上传失败立即中断，便于查看错误日志
 
     - name: Upload Appx Bundle to Pre-release
