@@ -68,6 +68,29 @@ jobs:
         SECRET_BINGMAPS_KEY: ${{ secrets.BING_MAPS_SECRET }}
         SECRET_SENTRY: ${{ secrets.SENTRY_SECRET }}
         SECRET_GITHUB_OAUTH_CLIENT_ID: ${{ secrets.GH_OAUTH_CLIENT_ID }}
+
+    - name: Define self-signed cert environment variable
+      shell: pwsh
+      run: |
+        # 定义自签名证书的输出路径（存放在 artifacts 目录下，与打包产物同目录，便于管理）
+        $selfSignedCertPath = "${{ env.ARTIFACTS_STAGING_DIR }}\Files_SelfSigned.pfx"
+        # 将路径存入环境变量，后续步骤可直接引用
+        echo "SELF_SIGNED_CERT_PATH=$selfSignedCertPath" >> $env:GITHUB_ENV
+
+    - name: Generate self-signed PFX certificate (for test/backup)
+      shell: pwsh
+      run: |
+        # 1. 检查是否存在生成自签名证书的脚本（若项目中无该脚本，需先创建，脚本内容见下文补充）
+        $scriptPath = "./.github/scripts/Generate-SelfCertPfx.ps1"
+        if (-not (Test-Path $scriptPath)) {
+          throw "Self-signed cert script not found! Please create $scriptPath first."
+        }
+        # 2. 调用脚本生成证书，指定输出路径（引用步骤1定义的环境变量）
+        & $scriptPath `
+          -Destination "$env:SELF_SIGNED_CERT_PATH" `
+          -Subject "CN=Files Sideload Test" ` # 证书主题（可自定义，如公司/项目名）
+          -ValidityDays 365 ` # 证书有效期（测试用建议30天，避免长期有效风险）
+          -Password "" # 证书密码（测试用可空，正式用需通过 Secrets 存储，如 ${{ secrets.SELF_SIGNED_CERT_PWD }}）
   
     - name: Use Windows SDK Preview
       shell: cmd
@@ -114,6 +137,10 @@ jobs:
         -p:UapAppxPackageBuildMode=Sideload `
         -p:GenerateAppInstallerFile=True `
         -p:AppInstallerUri=$env:APP_INSTALLER_SIDELOAD_URL `
+        -p:AppxPackageSigningEnabled=true `
+        -p:PackageCertificateKeyFile="$env:SELF_SIGNED_CERT_PATH" `
+        -p:PackageCertificatePassword="$env:SELF_SIGNED_CERT_PWD" `
+        -p:PackageCertificateThumbprint="" `
         -v:quiet
 
     - name: Remove empty files from the packages
@@ -127,23 +154,6 @@ jobs:
         $fileContent = Get-Content $localFilePath
         $fileContent = $fileContent.Replace("http://schemas.microsoft.com/appx/appinstaller/2017/2", $newSchema)
         $fileContent | Set-Content $localFilePath
-
-    - name: Sign Files with Azure Trusted Signing
-      uses: azure/trusted-signing-action@v0.4.0
-      with:
-        azure-tenant-id: ${{ secrets.AZURE_TENANT_ID }}
-        azure-client-id: ${{ secrets.AZURE_CLIENT_ID }}
-        azure-client-secret: ${{ secrets.AZURE_CLIENT_SECRET }}
-        endpoint: https://eus.codesigning.azure.net/
-        trusted-signing-account-name: ${{ secrets.SIGNING_ACCOUNT_NAME }}
-        certificate-profile-name: ${{ secrets.SIGNING_PROFILE_NAME }}
-        files-folder: ${{ env.APPX_PACKAGE_DIR }}
-        files-folder-filter: msixbundle
-        files-folder-recurse: true
-        files-folder-depth: 4
-        file-digest: SHA256
-        timestamp-rfc3161: http://timestamp.acs.microsoft.com
-        timestamp-digest: SHA256
 
     - name: Upload packages to Cloudflare
       uses: ryand56/r2-upload-action@latest
