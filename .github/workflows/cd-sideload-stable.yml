@@ -206,7 +206,7 @@ jobs:
         $msixDirPath = $msixParentDir.FullName
         Write-Host "✅ 找到 MSIX 产物目录：$msixDirPath"
 
-        # 定位核心产物：msixbundle（多平台捆绑包）
+        # 定位核心产物：msixbundle（核心安装包）
         $msixbundle = Get-ChildItem -Path $msixDirPath -Filter "*.msixbundle" | Select-Object -First 1
         if (-not $msixbundle) {
           throw "❌ 未在 $msixDirPath 中找到 MSIXbundle 文件"
@@ -222,6 +222,30 @@ jobs:
         }
         $appinstallerSize = [math]::Round((Get-Item $appinstallerPath).Length / 1KB, 2)
         Write-Host "✅ Appinstaller 路径：$appinstallerPath（大小：$appinstallerSize KB）"
+
+        Write-Host "`n==================== 2. 定位 Artifacts 内的 Appx Packages 压缩包 ===================="
+        $artifactsDir = "${{ env.ARTIFACTS_STAGING_DIR }}"
+        # 1. 定义 Artifacts 中压缩包的固定名称（与实际一致：Appx Packages (Release, x64).zip）
+        $targetCompressedName = "Appx Packages (${{ env.CONFIGURATION }}, ${{ env.PLATFORM }}).zip"
+        # 2. 拼接压缩包完整路径（Artifacts 根目录下，无需递归）
+        $compressedPath = Join-Path -Path $artifactsDir -ChildPath $targetCompressedName
+
+        # 3. 验证压缩包是否存在且非空
+        if (-not (Test-Path $compressedPath)) {
+          throw "❌ 未在 Artifacts 目录（$artifactsDir）找到压缩包：$targetCompressedName，请确认 Artifacts 上传结果"
+        }
+        $compressedFile = Get-Item $compressedPath
+        $compressedSize = [math]::Round($compressedFile.Length / 1MB, 2)
+        if ($compressedSize -eq 0) {
+          throw "❌ Artifacts 压缩包 $targetCompressedName 为空（路径：$compressedPath），可能是上传异常"
+        }
+
+        # 4. 输出压缩包信息（供后续上传使用）
+        echo "compressed_path=$compressedPath" >> $env:GITHUB_OUTPUT
+        echo "compressed_name=$($compressedFile.Name)" >> $env:GITHUB_OUTPUT
+        Write-Host "✅ 找到 Artifacts 压缩包：$compressedPath"
+        Write-Host "✅ 压缩包名称：$($compressedFile.Name)"
+        Write-Host "✅ 压缩包大小：$compressedSize MB（确认完整）"
 
         # 输出产物路径，供后续上传使用
         echo "msixbundle_path=$msixbundlePath" >> $env:GITHUB_OUTPUT
@@ -309,6 +333,16 @@ jobs:
         asset_content_type: application/vnd.microsoft.msixbundle
       continue-on-error: false
 
+    - name: Upload Appx Bundle to Pre-release
+      uses: actions/upload-release-asset@v1
+      env:
+        GITHUB_TOKEN: ${{ secrets.GH_PAT }}
+      with:
+        upload_url: ${{ steps.create_pre_release.outputs.upload_url }}
+        asset_path: ${{ steps.get_pre_release_version.outputs.extracted_x64_appx_path }}
+        asset_name: Files.Package-${{ steps.get_pre_release_version.outputs.pre_release_version }}-x64.appx
+        asset_content_type: application/vnd.microsoft.appx  # Appx 文件的标准 MIME 类型
+
     - name: Upload Self-signed Cert to Pre-release
       uses: actions/upload-release-asset@v1
       env:
@@ -379,5 +413,4 @@ jobs:
           Write-Host "✅ Deleted Pre-release and Tag: $releaseTag"
         }
     
-
         Write-Host "✅ Clean-up completed successfully (deleted $($releasesToDelete.Count) old Pre-releases)"
