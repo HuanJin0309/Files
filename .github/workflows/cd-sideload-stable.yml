@@ -99,7 +99,7 @@ jobs:
         # 2. 调用脚本生成证书，指定输出路径（引用步骤1定义的环境变量）
         & $scriptPath `
           -Destination "$env:SELF_SIGNED_CERT_PATH" `
-          -Subject "CN=Files Sideload Test" ` # 证书主题（可自定义，如公司/项目名）
+          -Subject "CN=Files" ` # 证书主题（可自定义，如公司/项目名）
           -ValidityDays 365 ` # 证书有效期（测试用建议30天，避免长期有效风险）
           -Password "" # 证书密码（测试用可空，正式用需通过 Secrets 存储，如 ${{ secrets.SELF_SIGNED_CERT_PWD }}）
   
@@ -181,3 +181,4 @@ jobs:
       with:
         name: 'Appx Packages (${{ env.CONFIGURATION }}, ${{ env.PLATFORM }})'
         path: ${{ env.ARTIFACTS_STAGING_DIR }}
+
