@@ -190,21 +190,104 @@ jobs:
         $fileContent = $fileContent.Replace("http://schemas.microsoft.com/appx/appinstaller/2017/2", $newSchema)
         $fileContent | Set-Content $localFilePath
 
-    #- name: Upload packages to Cloudflare
-    #  uses: ryand56/r2-upload-action@latest
-    #  with:
-    #    r2-account-id: ${{ secrets.R2_ACCOUNT_ID }}
-    #    r2-access-key-id: ${{ secrets.R2_ACCESS_KEY_ID }}
-    #    r2-secret-access-key: ${{ secrets.R2_SECRET_ACCESS_KEY }}
-    #    r2-bucket: ${{ secrets.R2_BUCKET }}
-    #    source-dir: ${{ env.APPX_PACKAGE_DIR }}
-    #    destination-dir: ./files/stable
-          
+    - name: Verify build artifacts & locate Zip bundle
+      id: verify_and_locate_bundle
+      shell: pwsh
+      run: |
+        Write-Host "==================== 1. 验证 Appx 包目录结构 ===================="
+        $appxDir = "${{ env.APPX_PACKAGE_DIR }}"
+        Write-Host "Appx Package Directory: $appxDir"
+        # 列出目录下所有文件（含大小、路径，确认产物是否完整）
+        Get-ChildItem -Path $appxDir -Recurse | ForEach-Object {
+          $fileSize = [math]::Round($_.Length / 1KB, 2)  # 转换为 KB，便于阅读
+          Write-Host "File: $($_.FullName) | Size: $fileSize KB | Exists: $($_.Exists)"
+        }
+
+        Write-Host "`n==================== 2. 定位编译自动生成的 Zip 压缩包 ===================="
+        # 匹配格式：Files.Package_Release_x64_Bundle.zip（编译默认生成的多平台压缩包）
+        $zipBundle = Get-ChildItem -Path $appxDir -Filter "Files.Package_*_Bundle.zip" | Select-Object -First 1
+        if (-not $zipBundle) {
+          throw "❌ 未找到编译生成的 Zip 压缩包（格式：Files.Package_*_Bundle.zip），请检查 msbuild 打包逻辑"
+        }
+        #  输出压缩包关键信息（路径、名称、大小）
+        $zipPath = $zipBundle.FullName
+        $zipName = $zipBundle.Name
+        $zipSize = [math]::Round($zipBundle.Length / 1MB, 2)  # 转换为 MB
+        echo "zip_bundle_path=$zipPath" >> $env:GITHUB_OUTPUT
+        echo "zip_bundle_name=$zipName" >> $env:GITHUB_OUTPUT
+        Write-Host "✅ 找到 Zip 压缩包：$zipPath"
+        Write-Host "✅ 压缩包名称：$zipName"
+        Write-Host "✅ 压缩包大小：$zipSize MB（确认非空）"
+
+        Write-Host "`n==================== 3. 验证独立 appinstaller 文件 ===================="
+        # 确认独立 appinstaller 文件是否存在（部分场景下会被打包进 Zip，需提前判断）
+        $appinstallerPath = "$appxDir\Files.Package.appinstaller"
+        if (Test-Path $appinstallerPath) {
+          $appinstallerSize = [math]::Round((Get-Item $appinstallerPath).Length / 1KB, 2)
+          if ($appinstallerSize -eq 0) {
+            throw "❌ 独立 appinstaller 文件为空（路径：$appinstallerPath），可能是打包过程异常"
+          }
+          echo "independent_appinstaller_path=$appinstallerPath" >> $env:GITHUB_OUTPUT
+          Write-Host "✅ 独立 appinstaller 文件存在：$appinstallerPath（大小：$appinstallerSize KB）"
+        } else {
+          Write-Host "⚠️ 未找到独立 appinstaller 文件，后续需从 Zip 压缩包中提取"
+          echo "independent_appinstaller_path=" >> $env:GITHUB_OUTPUT
+        }
+
     - name: Upload the packages to GitHub Actions
       uses: actions/upload-artifact@v4
       with:
         name: 'Appx Packages (${{ env.CONFIGURATION }}, ${{ env.PLATFORM }})'
         path: ${{ env.ARTIFACTS_STAGING_DIR }}
+
+    - name: Extract Zip bundle to get complete artifacts
+      id: extract_zip_bundle
+      shell: pwsh
+      run: |
+        # 从第一步获取 Zip 压缩包路径
+        $zipPath = "${{ steps.verify_and_locate_bundle.outputs.zip_bundle_path }}"
+        # 定义解压目录（在 Appx 目录下创建子目录，避免覆盖原文件）
+        $extractDir = "${{ env.APPX_PACKAGE_DIR }}\ExtractedArtifacts"
+    
+        Write-Host "==================== 开始解压 Zip 压缩包 ===================="
+        Write-Host "压缩包路径：$zipPath"
+        Write-Host "解压目标目录：$extractDir"
+
+        # 1. 创建解压目录（避免目录不存在导致解压失败）
+        if (-not (Test-Path $extractDir)) {
+          New-Item -Path $extractDir -ItemType Directory -Force | Out-Null
+          Write-Host "✅ 创建解压目录：$extractDir"
+        }
+
+        # 2. 执行解压（使用 PowerShell 原生命令，避免依赖第三方工具）
+        try {
+          Expand-Archive -Path $zipPath -DestinationPath $extractDir -Force -ErrorAction Stop
+        } catch {
+          throw "❌ 解压 Zip 压缩包失败：$($_.Exception.Message)（路径：$zipPath）"
+        }
+
+        # 3. 验证解压结果（确保提取出 appinstaller 和 Appx 包）
+        Write-Host "`n==================== 验证解压结果 ===================="
+        # 提取 appinstaller（从解压目录中递归查找）
+        $extractedAppinstaller = Get-ChildItem -Path $extractDir -Filter "Files.Package.appinstaller" -Recurse | Select-Object -First 1
+        if (-not $extractedAppinstaller) {
+          throw "❌ 从 Zip 中未提取到 appinstaller 文件（解压目录：$extractDir）"
+        }
+        # 提取 x64 平台 Appx 包（旁加载核心产物）
+        $extractedX64Appx = Get-ChildItem -Path $extractDir -Filter "*_x64.appx" -Recurse | Select-Object -First 1
+        if (-not $extractedX64Appx) {
+          throw "❌ 从 Zip 中未提取到 x64 平台 Appx 包（解压目录：$extractDir）"
+        }
+
+        # 4. 输出解压后的关键文件路径（供后续 Pre-release 上传使用）
+        echo "extracted_appinstaller_path=$($extractedAppinstaller.FullName)" >> $env:GITHUB_OUTPUT
+        echo "extracted_x64_appx_path=$($extractedX64Appx.FullName)" >> $env:GITHUB_OUTPUT
+        echo "extracted_dir=$extractDir" >> $env:GITHUB_OUTPUT
+
+        # 5. 日志输出（便于调试）
+        Write-Host "✅ 解压完成，关键产物路径："
+        Write-Host "   - appinstaller：$($extractedAppinstaller.FullName)（大小：$([math]::Round($extractedAppinstaller.Length/1KB,2)) KB）"
+        Write-Host "   - x64 Appx：$($extractedX64Appx.FullName)（大小：$([math]::Round($extractedX64Appx.Length/1MB,2)) MB）"
 
     - name: Generate unique Pre-release version
       id: get_pre_release_version
@@ -216,12 +299,24 @@ jobs:
         $preReleaseVersion = "$env:PRE_RELEASE_PREFIX-$timestamp"
         # 输出版本号到变量，供后续步骤使用
         echo "pre_release_version=$preReleaseVersion" >> $env:GITHUB_OUTPUT
-        # 输出 Appx 捆绑包实际文件名（从现有目录中匹配，避免硬编码）
-        $appxBundleFile = Get-ChildItem -Path "$env:APPX_PACKAGE_DIR" -Filter "*.zip" | Select-Object -First 1 | ForEach-Object { $_.Name }
-        echo "appx_bundle_filename=$appxBundleFile" >> $env:GITHUB_OUTPUT
-        # 日志输出（便于调试）
+
+        # 1. 从解压步骤获取 appinstaller 路径（优先使用解压后的完整文件）
+        $extractedAppinstallerPath = "${{ steps.extract_zip_bundle.outputs.extracted_appinstaller_path }}"
+        echo "extracted_appinstaller_path=$extractedAppinstallerPath" >> $env:GITHUB_OUTPUT
+        # 2. 从解压步骤获取 x64 Appx 路径
+        $extractedX64AppxPath = "${{ steps.extract_zip_bundle.outputs.extracted_x64_appx_path }}"
+        echo "extracted_x64_appx_path=$extractedX64AppxPath" >> $env:GITHUB_OUTPUT
+        # 3. 从第一步获取原始 Zip 压缩包路径（可选：如需上传原压缩包）
+        $originalZipPath = "${{ steps.verify_and_locate_bundle.outputs.zip_bundle_path }}"
+        $originalZipName = "${{ steps.verify_and_locate_bundle.outputs.zip_bundle_name }}"
+        echo "original_zip_path=$originalZipPath" >> $env:GITHUB_OUTPUT
+        echo "original_zip_name=$originalZipName" >> $env:GITHUB_OUTPUT
+
+        # ---------------------- 保留原日志输出 ----------------------
         Write-Host "✅ Generated Pre-release version: $preReleaseVersion"
-        Write-Host "✅ Detected Appx Bundle file: $appxBundleFile"
+        Write-Host "✅ Extracted appinstaller path: $extractedAppinstallerPath"
+        Write-Host "✅ Extracted x64 Appx path: $extractedX64AppxPath"
+        Write-Host "✅ Original Zip bundle path: $originalZipPath"
 
     - name: Create GitHub Pre-release
       id: create_pre_release
@@ -256,10 +351,11 @@ jobs:
         GITHUB_TOKEN: ${{ secrets.GH_PAT }}
       with:
         upload_url: ${{ steps.create_pre_release.outputs.upload_url }} # 关联 Pre-release
-        asset_path: ${{ env.APPX_PACKAGE_DIR }}\Files.Package.appinstaller # 现有 appinstaller 路径
+        asset_path: ${{ steps.get_pre_release_version.outputs.extracted_appinstaller_path }}
         # 资产显示名（含版本号，避免与历史版本混淆）
         asset_name: Files.Package-${{ steps.get_pre_release_version.outputs.pre_release_version }}.appinstaller
-        asset_content_type: application/xml # appinstaller 标准 MIME 类型
+        asset_content_type: application/xml  # 正确的 MIME 类型，确保 GitHub 识别
+      continue-on-error: false  # 上传失败立即中断，便于查看错误日志
 
     - name: Upload Appx Bundle to Pre-release
       uses: actions/upload-release-asset@v1
@@ -267,9 +363,9 @@ jobs:
         GITHUB_TOKEN: ${{ secrets.GH_PAT }}
       with:
         upload_url: ${{ steps.create_pre_release.outputs.upload_url }}
-        asset_path: ${{ env.APPX_PACKAGE_DIR }}\${{ steps.get_pre_release_version.outputs.appx_bundle_filename }} # 自动匹配的 Zip 文件
-        asset_name: ${{ steps.get_pre_release_version.outputs.appx_bundle_filename }} # 保留原文件名（含版本信息）
-        asset_content_type: application/zip # Zip 文件标准 MIME 类型
+        asset_path: ${{ steps.get_pre_release_version.outputs.extracted_x64_appx_path }}
+        asset_name: Files.Package-${{ steps.get_pre_release_version.outputs.pre_release_version }}-x64.appx
+        asset_content_type: application/vnd.microsoft.appx  # Appx 文件的标准 MIME 类型
 
     - name: Upload Self-signed Cert to Pre-release
       uses: actions/upload-release-asset@v1
