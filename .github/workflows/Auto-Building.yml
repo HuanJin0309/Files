@@ -81,17 +81,16 @@ jobs:
           echo "📊 Current SHA (target repo): $CURR_SHA"
           echo "📊 Previous SHA (recorded): $PREV_SHA"
           
-          # 对比 SHA：若不同，说明目标仓库有新提交；若相同/历史 SHA 为空，说明无更新或首次检测
-          if [ "$CURR_SHA" != "$PREV_SHA" ]; then
-            echo "new_commit=true" >> $GITHUB_OUTPUT
-            echo "🎉 New commit detected in target repo! Will trigger build workflow."
+          # 仅输出对比结果（不控制后续步骤），无论是否有新提交都继续流程
+          if [ "$CURR_SHA" != "$PREV_SHA" ] || [ -z "$PREV_SHA" ]; then
+            echo "ℹ️ New commit detected (or first check) - will update SHA record"
           else
-            echo "new_commit=false" >> $GITHUB_OUTPUT
-            echo "ℹ️ No new commits in target repo (or first check), skip build."
+            echo "ℹ️ No new commits - still trigger build (per requirement)"
           fi
+          # 强制输出一个非空值（避免后续步骤依赖问题，可删除，但保留更稳妥）
+          echo "force_build=true" >> $GITHUB_OUTPUT
 
       - name: Update SHA record in 'sha-record' branch
-        if: steps.compare_sha.outputs.new_commit == 'true'
         run: |
           RECORD_BRANCH="sha-record"
           LATEST_SHA="${{ steps.get_latest_sha.outputs.sha }}"
@@ -116,13 +115,19 @@ jobs:
           
           echo "✅ Updated SHA record to '$RECORD_BRANCH' branch"
 
-      - name: Trigger your build workflow (e.g., build.yml)
-        if: steps.compare_sha.outputs.new_commit == 'true'
+      - name: Trigger your build workflow
         run: |
-          # ！！核心修改点3：替换为你的「构建工作流文件名」（如 build.yml、ci-build.yml）
           BUILD_WORKFLOW_FILE="cd-sideload-stable.yml"
-          # ！！核心修改点4：替换为构建工作流依赖的「分支」（如 main、dev）
           BUILD_BRANCH="main"
+          CURR_SHA="${{ steps.get_latest_sha.outputs.sha }}"
+          PREV_SHA="${{ steps.get_prev_sha.outputs.prev_sha }}"
+
+          # 条件日志（仅用于区分场景，不影响触发）
+          if [ "$CURR_SHA" != "$PREV_SHA" ] || [ -z "$PREV_SHA" ]; then
+            echo "ℹ️ Triggering build due to new commit (or first check)..."
+          else
+            echo "ℹ️ Triggering build per requirement (no new commits)..."
+          fi
           
           # 调用 GitHub API 触发构建工作流
           curl -X POST \
@@ -133,5 +138,5 @@ jobs:
             -d '{
               "ref": "'"$BUILD_BRANCH"'"
             }'
-    
-          echo "✅ Triggered build workflow: $BUILD_WORKFLOW_FILE (branch: $BUILD_BRANCH)"
+
+          echo "✅ Triggered build workflow: $BUILD_WORKFLOW_FILE (branch: $BUILD_BRANCH) - regardless of new commits"
