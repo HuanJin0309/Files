@@ -40,8 +40,8 @@ jobs:
       TEST_PROJECT_PATH:          'tests\Files.InteractionTests\Files.InteractionTests.csproj'
       APP_INSTALLER_SIDELOAD_URL: 'https://cdn.files.community/files/stable/'
       # 证书路径统一定义（避免重复写路径）
-      SELF_SIGNED_PFX_PATH:       '${{ env.ARTIFACTS_STAGING_DIR }}\Files_SelfSigned.pfx'
-      SELF_SIGNED_CER_PATH:       '${{ env.ARTIFACTS_STAGING_DIR }}\Files_SelfSigned.cer'
+      SELF_SIGNED_PFX_PATH:       '${ARTIFACTS_STAGING_DIR}\Files_SelfSigned.pfx'
+      SELF_SIGNED_CER_PATH:       '${ARTIFACTS_STAGING_DIR}\Files_SelfSigned.cer'
 
     steps:
     - name: Checkout the repository
@@ -156,8 +156,8 @@ jobs:
         -p:GenerateAppInstallerFile=True `
         -p:AppInstallerUri=$env:APP_INSTALLER_SIDELOAD_URL `
         -p:AppxPackageSigningEnabled=true `
-        -p:PackageCertificateKeyFile="$env:SELF_SIGNED_CERT_PATH" `
-        -p:PackageCertificatePassword="$env:SELF_SIGNED_CERT_PWD" `
+        -p:PackageCertificateKeyFile="$env:SELF_SIGNED_PFX_PATH" `
+        -p:PackageCertificatePassword="" `
         -p:PackageCertificateThumbprint="" `
         -v:quiet
 
@@ -243,7 +243,7 @@ jobs:
           -	找到页面下方 PowerShell 选项 (Windows 11 需要展开)- 勾选 「更改执行策略……」(Windows 10 需要点击应用)
           - 2. 下载并双击运行自签名证书文件, 按照向导安装证书, 选择 「本地计算机」- 「将所有的证书都放到下列存储」-[点浏览选择受信任人并按提示安装即可] 
           - 3. 下载并双击运行 MSIX 包体文件, 安装应用
-          - 也可直接下载去action处下载Appx Packages (Release, x64).zip解压后在AppxPackages\Files.Package_4.0.21.0_Test该路径中运行Install.ps1
+          - 也可直接下载去action处下载 `Appx Packages (Release, x64).zip`, 解压后在 `AppxPackages\Files.Package_*_Test` 该路径中运行 `Install.ps1`
         draft: false
         prerelease: true
         target_commitish: ${{ github.ref_name }}
