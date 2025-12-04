@@ -22,6 +22,11 @@ param(
 $CertFriendlyName = "FilesApp_SelfSigned"
 $CertStoreLocation = "Cert:\CurrentUser\My"
 
+# 新增：强制验证 $Subject 是否非空，为空则抛出明确错误
+if ([string]::IsNullOrEmpty($Subject)) {
+    throw "Error: Subject parameter is empty! Check CI parameter passing or script default value. Current Subject: '$Subject'"
+}
+
 $cert = New-SelfSignedCertificate `
     -Type CodeSigningCert `  # 推荐用 CodeSigningCert，兼容性更好
     -Subject $Subject `
