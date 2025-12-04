@@ -109,25 +109,6 @@ jobs:
         echo "cer_full_path=$cerFullPath" >> $env:GITHUB_OUTPUT
         Write-Host "Generated certs: PFX($pfxFullPath) | CER($cerFullPath)"
 
-    - name: Verify dynamic cert paths (debug)
-      shell: pwsh
-      run: |
-        Write-Host "==================== 验证动态生成的证书路径 ===================="
-        Write-Host "PFX full path (from step output): ${{ steps.generate_cert.outputs.pfx_full_path }}"
-        Write-Host "CER full path (from step output): ${{ steps.generate_cert.outputs.cer_full_path }}"
-        Write-Host "PFX full path (from global env): $env:PFX_FULL_PATH"
-        Write-Host "CER full path (from global env): $env:CER_FULL_PATH"
-        if (Test-Path "${{ steps.generate_cert.outputs.pfx_full_path }}") {
-          Write-Host "PFX file exists"
-        } else {
-          throw "PFX file missing: ${{ steps.generate_cert.outputs.pfx_full_path }}"
-        }
-        if (Test-Path "${{ steps.generate_cert.outputs.cer_full_path }}") {
-          Write-Host "CER file exists"
-        } else {
-          throw "CER file missing: ${{ steps.generate_cert.outputs.cer_full_path }}"
-        }
-
     - name: Use Windows SDK Preview
       shell: cmd
       run: |
@@ -178,13 +159,6 @@ jobs:
         -p:PackageCertificatePassword="" `
         -p:PackageCertificateThumbprint="" `
         -v:quiet
-
-        #(debug)
-        $msixBundlePath = Get-ChildItem -Path "$env:APPX_PACKAGE_DIR" -Filter "*.msixbundle" -Recurse | Select-Object -First 1
-        if (-not $msixBundlePath) {
-          throw "MSIXbundle not found after build: $env:APPX_PACKAGE_DIR"
-        }
-        Write-Host "Built & signed MSIXbundle: $($msixBundlePath.FullName)"
 
     - name: Remove empty files from the packages
       shell: bash
