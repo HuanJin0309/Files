@@ -13,211 +13,285 @@
 
 name: Files CD (Sideload Stable)
 
+# 触发条件：仅支持「手动触发」（通过 GitHub Actions 页面点击运行）
 on:
   workflow_dispatch:
 
+# 定义任务（Job）：唯一任务为「build」（构建与部署）
 jobs:
   build:
+    # 运行环境：使用最新版 Windows 系统（因 Files 是 Windows 应用，依赖 Windows 构建工具）
     runs-on: windows-latest
+    # 环境配置：关联「Deployments」环境（通常用于管理部署相关的敏感变量/审批流程）
     environment: Deployments
+    # 构建策略配置
     strategy:
+      # 失败策略：不快速失败（即一个矩阵任务失败不影响其他，但此处矩阵仅1组，实际无影响）
       fail-fast: false
+      # 构建矩阵：定义构建的配置和平台（仅 Release 配置 + x64 平台）
       matrix:
-        configuration: [Release]
-        platform: [x64]
+        configuration: [Release]  # 构建配置：Release（正式发布版，无调试信息）
+        platform: [x64]           # 目标平台：x64（64位 Windows 系统）
+
+    # 环境变量定义：全局复用的路径和配置，避免硬编码
     env:
-      SOLUTION_NAME:              'Files.slnx'
-      CONFIGURATION:              '${{ matrix.configuration }}'
-      PLATFORM:                   '${{ matrix.platform }}'
-      APPX_BUNDLE_PLATFORMS:      'x64|arm64'
-      WORKING_DIR:                '${{ github.workspace }}'
-      ARTIFACTS_STAGING_DIR:      '${{ github.workspace }}\artifacts'
-      APPX_PACKAGE_DIR:           '${{ github.workspace }}\artifacts\AppxPackages'
-      PACKAGE_PROJECT_DIR:        'src\Files.App (Package)'
-      PACKAGE_PROJECT_PATH:       'src\Files.App (Package)\Files.Package.wapproj'
-      PACKAGE_MANIFEST_PATH:      'src\Files.App (Package)\Package.appxmanifest'
-      LAUNCHER_PROJECT_PATH:      'src\Files.App.Launcher\Files.App.Launcher.vcxproj'
-      TEST_PROJECT_PATH:          'tests\Files.InteractionTests\Files.InteractionTests.csproj'
-      APP_INSTALLER_SIDELOAD_URL: 'https://cdn.files.community/files/stable/'
-      # 证书路径统一定义（避免重复写路径）
-      SELF_SIGNED_PFX_FILENAME:       'Files_SelfSigned.pfx'
-      SELF_SIGNED_CER_FILENAME:       'Files_SelfSigned.cer'
+      SOLUTION_NAME:              'Files.slnx'  # 解决方案文件名（VS 解决方案文件）
+      CONFIGURATION:              '${{ matrix.configuration }}'  # 引用矩阵中的构建配置
+      PLATFORM:                   '${{ matrix.platform }}'       # 引用矩阵中的目标平台
+      APPX_BUNDLE_PLATFORMS:      'x64|arm64'  # 应用包捆绑的平台（支持 x64 和 arm64 双平台）
+      WORKING_DIR:                '${{ github.workspace }}'  # 工作目录（GitHub 仓库克隆后的根目录）
+      ARTIFACTS_STAGING_DIR:      '${{ github.workspace }}\artifacts'  # 构建产物暂存目录
+      APPX_PACKAGE_DIR:           '${{ github.workspace }}\artifacts\AppxPackages'  # 应用包输出目录
+      PACKAGE_PROJECT_DIR:        'src\Files.App (Package)'  # 应用包项目目录（包含打包配置）
+      PACKAGE_PROJECT_PATH:       'src\Files.App (Package)\Files.Package.wapproj'  # 应用包项目文件路径
+      PACKAGE_MANIFEST_PATH:      'src\Files.App (Package)\Package.appxmanifest'  # 应用清单路径（定义应用身份、权限等）
+      LAUNCHER_PROJECT_PATH:      'src\Files.App.Launcher\Files.App.Launcher.vcxproj'  # 启动器项目路径（C++ 项目）
+      TEST_PROJECT_PATH:          'tests\Files.InteractionTests\Files.InteractionTests.csproj'  # 交互测试项目路径（暂未使用）
+      APP_INSTALLER_SIDELOAD_URL: 'https://cdn.files.community/files/stable/'  # appinstaller 文件的远程访问 URL
+      # 证书文件名统一定义（避免路径重复书写，便于维护）
+      SELF_SIGNED_PFX_FILENAME:       'Files_SelfSigned.pfx'  # 自签名证书文件（PFX 格式，含私钥）
+      SELF_SIGNED_CER_FILENAME:       'Files_SelfSigned.cer'  # 自签名证书文件（CER 格式，仅公钥，用于安装）
 
+    # 步骤（Steps）：按顺序执行的具体操作
     steps:
+    # 步骤1：克隆代码仓库到工作目录
     - name: Checkout the repository
-      uses: actions/checkout@v4
+      uses: actions/checkout@v4  # 使用官方 Checkout 动作，版本 v4
+      # 功能：将当前 GitHub 仓库的代码克隆到 runner 的工作目录（$WORKING_DIR）
 
+    # 步骤2：配置 MSBuild 工具（用于构建 Visual Studio 项目）
     - name: Setup MSBuild
-      uses: microsoft/setup-msbuild@v2
+      uses: microsoft/setup-msbuild@v2  # 使用微软官方 MSBuild 配置动作，版本 v2
+      # 功能：自动安装并配置最新版 MSBuild（Windows 应用构建核心工具）
 
+    # 步骤3：配置 NuGet 工具（用于管理 .NET 项目依赖）
     - name: Setup NuGet
-      uses: NuGet/setup-nuget@v2
+      uses: NuGet/setup-nuget@v2  # 使用 NuGet 官方配置动作，版本 v2
+      # 功能：安装 NuGet CLI，用于后续恢复项目的 NuGet 依赖包
 
+    # 步骤4：配置 .NET 环境（Files 基于 .NET 开发）
     - name: Setup .NET
-      uses: actions/setup-dotnet@v4
+      uses: actions/setup-dotnet@v4  # 使用官方 .NET 配置动作，版本 v4
       with:
-        global-json-file: global.json
+        global-json-file: global.json  # 引用项目根目录的 global.json，指定 .NET 版本
+      # 功能：根据 global.json 中定义的版本，安装对应的 .NET SDK 和运行时
 
+    # 步骤5：配置应用清单、图标和敏感信息（核心配置步骤）
     - name: Configure the package manifest, logo, and secrets
-      shell: pwsh
+      shell: pwsh  # 使用 PowerShell 执行脚本
       run: |
+        # 调用预定义的 PowerShell 脚本，传入配置参数
         . './.github/scripts/Configure-AppxManifest.ps1' `
-          -Branch "SideloadStable" `
-          -PackageManifestPath "$env:PACKAGE_MANIFEST_PATH" `
-          -Publisher "$env:SIDELOAD_PUBLISHER_SECRET" `
-          -WorkingDir "$env:WORKING_DIR" `
-          -SecretBingMapsKey "$env:SECRET_BINGMAPS_KEY" `
-          -SecretSentry "$env:SECRET_SENTRY" `
-          -SecretGitHubOAuthClientId "$env:SECRET_GITHUB_OAUTH_CLIENT_ID"
+          -Branch "SideloadStable" `  # 分支标识：侧载稳定版
+          -PackageManifestPath "$env:PACKAGE_MANIFEST_PATH" `  # 应用清单路径
+          -Publisher "$env:SIDELOAD_PUBLISHER_SECRET" `  # 发布者信息（从敏感变量获取）
+          -WorkingDir "$env:WORKING_DIR" `  # 工作目录
+          -SecretBingMapsKey "$env:SECRET_BINGMAPS_KEY" `  # Bing 地图 API 密钥（敏感信息）
+          -SecretSentry "$env:SECRET_SENTRY" `  # Sentry 错误监控密钥（敏感信息）
+          -SecretGitHubOAuthClientId "$env:SECRET_GITHUB_OAUTH_CLIENT_ID"  # GitHub OAuth 客户端 ID（敏感信息）
+      # 敏感变量注入：从 GitHub 仓库的 Secrets 中读取，避免明文暴露
       env:
-        SIDELOAD_PUBLISHER_SECRET: ${{ secrets.SIDELOAD_PUBLISHER_SECRET }}
-        SECRET_BINGMAPS_KEY:       ${{ secrets.BING_MAPS_SECRET }}
-        SECRET_SENTRY:             ${{ secrets.SENTRY_SECRET }}
-        SECRET_GITHUB_OAUTH_CLIENT_ID: ${{ secrets.GH_OAUTH_CLIENT_ID }}
+        SIDELOAD_PUBLISHER_SECRET: ${{ secrets.SIDELOAD_PUBLISHER_SECRET }}  # 侧载版发布者标识
+        SECRET_BINGMAPS_KEY:       ${{ secrets.BING_MAPS_SECRET }}            # Bing 地图密钥
+        SECRET_SENTRY:             ${{ secrets.SENTRY_SECRET }}              # Sentry 密钥
+        SECRET_GITHUB_OAUTH_CLIENT_ID: ${{ secrets.GH_OAUTH_CLIENT_ID }}      # GitHub OAuth 客户端 ID
 
+    # 步骤6：从应用清单中提取版本号（用于后续版本命名）
     - name: Extract version from Package.appxmanifest
-      id: extract_manifest_version
+      id: extract_manifest_version  # 步骤 ID，后续可通过该 ID 引用输出结果
       shell: pwsh
       run: |
+        # 读取应用清单文件（XML 格式）
         $manifest = [xml](Get-Content -Path $env:PACKAGE_MANIFEST_PATH -Encoding UTF8)
+        # 从 XML 节点中提取版本号（Package/Identity/Version）
         $manifestVersion = $manifest.Package.Identity.Version
+        # 校验版本号是否存在，不存在则抛出错误终止流程
         if ([string]::IsNullOrEmpty($manifestVersion)) {
           throw "Failed to extract version (Identity/Version node missing in $env:PACKAGE_MANIFEST_PATH)"
         }
+        # 生成预发布版本前缀（格式：v{主版本.次版本.修订版本}-sideload-pre，如 v2.4.3-sideload-pre）
         $preReleasePrefix = "v$($manifestVersion -replace '\.\d+$', '')-sideload-pre"
+        # 将版本号和前缀写入环境变量，供后续步骤使用
         echo "MANIFEST_VERSION=$manifestVersion" >> $env:GITHUB_ENV
         echo "PRE_RELEASE_PREFIX=$preReleasePrefix" >> $env:GITHUB_ENV
+        # 打印日志，便于调试
         Write-Host "Extracted version: $manifestVersion → Pre-release prefix: $preReleasePrefix"
 
+    # 步骤7：生成自签名证书（PFX 格式含私钥，CER 格式含公钥）
     - name: Generate self-signed cert (PFX → CER)
-      id: generate_cert
+      id: generate_cert  # 步骤 ID，后续引用证书路径
       shell: pwsh
       run: |
+        # 拼接证书文件的完整路径（输出到产物暂存目录）
         $pfxFullPath = Join-Path -Path "${{ env.ARTIFACTS_STAGING_DIR }}" -ChildPath "${{ env.SELF_SIGNED_PFX_FILENAME }}"
         $cerFullPath = Join-Path -Path "${{ env.ARTIFACTS_STAGING_DIR }}" -ChildPath "${{ env.SELF_SIGNED_CER_FILENAME }}"
+        # 若产物暂存目录不存在，则创建目录
         if (-not (Test-Path "${{ env.ARTIFACTS_STAGING_DIR }}")) {
           New-Item -Path "${{ env.ARTIFACTS_STAGING_DIR }}" -ItemType Directory -Force | Out-Null
         }
+        # 定义证书生成脚本路径
         $certScript = "./.github/scripts/Generate-SelfCertPfx.ps1"
+        # 校验脚本是否存在，不存在则抛出错误
         if (-not (Test-Path $certScript)) { throw "Cert script missing: $certScript" }
+        # 执行脚本生成 PFX 证书（有效期 365 天）
         & $certScript -Destination "$pfxFullPath" -ValidityDays 365
+        # 从 PFX 证书中提取公钥，生成 CER 证书（用于用户安装信任）
         $pfxCert = New-Object System.Security.Cryptography.X509Certificates.X509Certificate2($pfxFullPath, "", [System.Security.Cryptography.X509Certificates.X509KeyStorageFlags]::Exportable)
         [System.IO.File]::WriteAllBytes($cerFullPath, $pfxCert.Export([System.Security.Cryptography.X509Certificates.X509ContentType]::Cert))
+        # 校验证书文件是否生成成功，失败则抛出错误
         if (-not (Test-Path $pfxFullPath) -or (Get-Item $pfxFullPath).Length -eq 0) { throw "PFX generation failed: $pfxFullPath" }
         if (-not (Test-Path $cerFullPath) -or (Get-Item $cerFullPath).Length -eq 0) { throw "CER generation failed: $cerFullPath" }
+        # 将证书路径写入步骤输出，供后续签名步骤使用
         echo "pfx_full_path=$pfxFullPath" >> $env:GITHUB_OUTPUT
         echo "cer_full_path=$cerFullPath" >> $env:GITHUB_OUTPUT
+        # 打印日志
         Write-Host "Generated certs: PFX($pfxFullPath) | CER($cerFullPath)"
 
+    # 步骤8：启用 Windows SDK Preview 版本（适配最新 Windows 特性）
     - name: Use Windows SDK Preview
-      shell: cmd
+      shell: cmd  # 使用 CMD 执行命令
       run: |
+        # 遍历 Visual Studio 17.x 版本目录，创建 sdk.txt 文件启用预览版 SDK
         for /f %%a in ('dir /b /a:d %localappdata%\Microsoft\VisualStudio\17*') do echo UsePreviews=True>%localappdata%\Microsoft\VisualStudio\%%a\sdk.txt
+      # 功能：确保构建时使用 Windows SDK 预览版，避免因 SDK 版本不兼容导致的构建错误
 
+    # 步骤9：恢复解决方案的依赖包（.NET 项目依赖）
     - name: Restore Files
       shell: pwsh
       run: |
+        # 使用 MSBuild 执行「Restore」目标，恢复项目依赖
         msbuild $env:SOLUTION_NAME `
-        -t:Restore `
-        -p:Platform=$env:PLATFORM `
-        -p:Configuration=$env:CONFIGURATION `
-        -p:PublishReadyToRun=true `
-        -v:quiet
+        -t:Restore `  # 目标：恢复依赖
+        -p:Platform=$env:PLATFORM `  # 指定平台
+        -p:Configuration=$env:CONFIGURATION `  # 指定配置
+        -p:PublishReadyToRun=true `  # 启用 ReadyToRun 编译（提升应用启动速度）
+        -v:quiet  # 日志级别：安静（仅输出错误信息）
 
+    # 步骤10：恢复启动器项目的 NuGet 依赖（C++ 项目单独恢复）
     - name: Restore NuGet Packages for Launcher Project
       shell: pwsh
       run: |
+        # 使用 NuGet CLI 恢复启动器项目的依赖（因 C++ 项目可能不通过 MSBuild Restore 完全恢复）
         nuget restore "$env:LAUNCHER_PROJECT_PATH" `
-          -SolutionDirectory "$env:WORKING_DIR" `
-          -Verbosity detailed
-    
+          -SolutionDirectory "$env:WORKING_DIR" `  # 指定解决方案目录
+          -Verbosity detailed  # 日志级别：详细（便于调试依赖问题）
+
+    # 步骤11：构建启动器项目（C++ 项目，用于启动主应用）
     - name: Build launcher project
       shell: pwsh
       run: |
+        # 使用 MSBuild 构建启动器项目
         msbuild "$env:LAUNCHER_PROJECT_PATH" `
-        -t:Build `
-        -p:Platform=$env:PLATFORM `
-        -p:Configuration=$env:CONFIGURATION `
-        -v:quiet
+        -t:Build `  # 目标：构建项目
+        -p:Platform=$env:PLATFORM `  # 指定平台
+        -p:Configuration=$env:CONFIGURATION `  # 指定配置
+        -v:quiet  # 日志级别：安静
 
+    # 步骤12：构建并打包应用（生成 MSIX 包和 appinstaller 文件）
     - name: Build & package Files
       shell: pwsh
       run: |
+        # 使用 MSBuild 构建应用包项目，并生成侧载格式的安装包
         msbuild "$env:PACKAGE_PROJECT_PATH" `
-        -t:Build `
-        -t:_GenerateAppxPackage `
-        -p:Platform=$env:PLATFORM `
-        -p:Configuration=$env:CONFIGURATION `
-        -p:AppxBundlePlatforms=$env:APPX_BUNDLE_PLATFORMS `
-        -p:AppxPackageDir="$env:APPX_PACKAGE_DIR" `
-        -p:AppxBundle=Always `
-        -p:UapAppxPackageBuildMode=Sideload `
-        -p:GenerateAppInstallerFile=True `
-        -p:AppInstallerUri=$env:APP_INSTALLER_SIDELOAD_URL `
-        -p:AppxPackageSigningEnabled=true `
-        -p:PackageCertificateKeyFile="${{ steps.generate_cert.outputs.pfx_full_path }}" `
-        -p:PackageCertificatePassword="" `
-        -p:PackageCertificateThumbprint="" `
-        -v:quiet
+        -t:Build `  # 目标1：构建项目
+        -t:_GenerateAppxPackage `  # 目标2：生成 Appx 包（MSIX 格式）
+        -p:Platform=$env:PLATFORM `  # 指定构建平台
+        -p:Configuration=$env:CONFIGURATION `  # 指定构建配置
+        -p:AppxBundlePlatforms=$env:APPX_BUNDLE_PLATFORMS `  # 指定捆绑的平台（x64+arm64）
+        -p:AppxPackageDir="$env:APPX_PACKAGE_DIR" `  # 指定包输出目录
+        -p:AppxBundle=Always `  # 强制生成捆绑包（合并多平台包）
+        -p:UapAppxPackageBuildMode=Sideload `  # 构建模式：侧载（非商店发布）
+        -p:GenerateAppInstallerFile=True `  # 生成 appinstaller 安装配置文件
+        -p:AppInstallerUri=$env:APP_INSTALLER_SIDELOAD_URL `  # 指定 appinstaller 的远程 URL
+        -p:AppxPackageSigningEnabled=true `  # 启用包签名
+        -p:PackageCertificateKeyFile="${{ steps.generate_cert.outputs.pfx_full_path }}" `  # 签名使用的 PFX 证书路径
+        -p:PackageCertificatePassword="" `  # PFX 证书密码（自签名证书无密码）
+        -p:PackageCertificateThumbprint="" `  # 证书指纹（留空，MSBuild 自动读取）
+        -v:quiet  # 日志级别：安静
 
+    # 步骤13：删除产物目录中的空文件（减少不必要的文件体积）
     - name: Remove empty files from the packages
-      shell: bash
-      run: find $ARTIFACTS_STAGING_DIR -empty -delete
+      shell: bash  # 使用 Bash 执行命令（依赖 runner 中的 Git Bash）
+      run: find $ARTIFACTS_STAGING_DIR -empty -delete  # 查找并删除空文件
+      # 功能：清理空文件，避免后续打包和上传时携带无用文件
 
+    # 步骤14：更新 appinstaller 文件的 XML  schema（适配新版 Windows 安装器）
     - name: Update appinstaller schema
       run: |
+        # 定义新版 schema 地址（2018 版，支持更多特性）
         $newSchema = "http://schemas.microsoft.com/appx/appinstaller/2018"
+        # appinstaller 文件路径
         $localFilePath = "${{ env.APPX_PACKAGE_DIR }}/Files.Package.appinstaller"
+        # 读取文件内容，替换旧 schema（2017/2 版）为新版
         $fileContent = Get-Content $localFilePath
         $fileContent = $fileContent.Replace("http://schemas.microsoft.com/appx/appinstaller/2017/2", $newSchema)
+        # 写入更新后的内容
         $fileContent | Set-Content $localFilePath
+      # 功能：确保 appinstaller 文件兼容新版 Windows 系统的安装逻辑
 
+    # 步骤15：校验未压缩的构建产物（确保核心文件存在，避免后续步骤出错）
     - name: Verify uncompressed artifacts (MSIX + Appinstaller)
-      id: verify_uncompressed_artifacts
+      id: verify_uncompressed_artifacts  # 步骤 ID，后续引用产物路径
       shell: pwsh
       run: |
+        # 查找 MSIX 包所在的目录（格式：Files.Package_*_Test）
         $msixDir = Get-ChildItem -Path $env:APPX_PACKAGE_DIR -Directory -Filter "Files.Package_*_Test" | Select-Object -First 1
+        # 若目录不存在，抛出错误
         if (-not $msixDir) { throw "MSIX dir missing: $env:APPX_PACKAGE_DIR\Files.Package_*_Test" }
+        # 查找目录中的 MSIX 捆绑包文件（.msixbundle）
         $msixbundle = Get-ChildItem -Path $msixDir.FullName -Filter "*.msixbundle" | Select-Object -First 1
+        # appinstaller 文件路径
         $appinstaller = "$env:APPX_PACKAGE_DIR\Files.Package.appinstaller"
+        # 校验 MSIX 包和 appinstaller 文件是否存在，不存在则抛出错误
         if (-not $msixbundle -or -not (Test-Path $appinstaller)) {
           throw "Critical artifact missing: MSIX($($msixbundle.FullName)) | Appinstaller($appinstaller)"
         }
+        # 将产物路径写入步骤输出，供后续上传使用
         echo "msixbundle_path=$($msixbundle.FullName)" >> $env:GITHUB_OUTPUT
         echo "appinstaller_path=$appinstaller" >> $env:GITHUB_OUTPUT
+        # 打印日志
         Write-Host "Verified artifacts: MSIX($($msixbundle.Name)) | Appinstaller($appinstaller)"
 
+    # 步骤16：将构建产物上传到 GitHub Actions Artifacts（供手动下载）
     - name: Upload the packages to GitHub Actions
-      uses: actions/upload-artifact@v4
+      uses: actions/upload-artifact@v4  # 使用官方上传动作，版本 v4
       with:
-        name: 'Appx Packages (${{ env.CONFIGURATION }}, ${{ env.PLATFORM }})'
-        path: ${{ env.ARTIFACTS_STAGING_DIR }}
-      continue-on-error: false
+        name: 'Appx Packages (${{ env.CONFIGURATION }}, ${{ env.PLATFORM }})'  # Artifact 名称（含配置和平台）
+        path: ${{ env.ARTIFACTS_STAGING_DIR }}  # 待上传的产物目录
+      continue-on-error: false  # 若上传失败，终止流程
+      # 功能：将构建产物存档到 GitHub Actions，支持手动下载（如调试或离线使用）
 
+    # 步骤17：生成唯一的预发布版本号（避免版本冲突）
     - name: Generate unique Pre-release version
-      id: get_pre_release_version
+      id: get_pre_release_version  # 步骤 ID，后续引用版本号
       shell: pwsh
       run: |
+        # 生成版本号（格式：前缀-时间戳，如 v2.4.3-sideload-pre-20240520-143000）
         $preReleaseVersion = "$env:PRE_RELEASE_PREFIX-$(Get-Date -Format 'yyyyMMdd-HHmmss')"
+        # 从之前的步骤中获取 MSIX 和 appinstaller 文件路径
         $msixPath = "${{ steps.verify_uncompressed_artifacts.outputs.msixbundle_path }}"
         $appinstallerPath = "${{ steps.verify_uncompressed_artifacts.outputs.appinstaller_path }}"
+        # 校验路径是否为空，为空则抛出错误
         if ([string]::IsNullOrEmpty($msixPath) -or [string]::IsNullOrEmpty($appinstallerPath)) {
           throw "Artifact path empty: MSIX($msixPath) | Appinstaller($appinstallerPath)"
         }
+        # 将版本号和产物路径写入步骤输出
         echo "pre_release_version=$preReleaseVersion" >> $env:GITHUB_OUTPUT
         echo "msixbundle_path=$msixPath" >> $env:GITHUB_OUTPUT
         echo "appinstaller_path=$appinstallerPath" >> $env:GITHUB_OUTPUT
+        # 打印日志
         Write-Host "Generated Pre-release version: $preReleaseVersion"
 
+    # 步骤18：在 GitHub 上创建预发布版本（Release）
     - name: Create GitHub Pre-release
-      id: create_pre_release
-      uses: actions/create-release@v1
+      id: create_pre_release  # 步骤 ID，后续引用发布的上传 URL
+      uses: actions/create-release@v1  # 使用官方创建 Release 动作，版本 v1
       env:
-        GITHUB_TOKEN: ${{ secrets.GH_PAT }}
+        GITHUB_TOKEN: ${{ secrets.GH_PAT }}  # 身份认证令牌（从 Secrets 读取，需 repo 权限）
       with:
-        tag_name:        ${{ steps.get_pre_release_version.outputs.pre_release_version }}
-        release_name:    "Files Sideload Pre-release ${{ steps.get_pre_release_version.outputs.pre_release_version }}"
-        body: |
+        tag_name:        ${{ steps.get_pre_release_version.outputs.pre_release_version }}  # Release 标签（与版本号一致）
+        release_name:    "Files Sideload Pre-release ${{ steps.get_pre_release_version.outputs.pre_release_version }}"  # Release 名称
+        body: |  # Release 描述内容（Markdown 格式）
           ## 🚀 Files 侧载预发布
           自动构建生成 (Files CD sideload stable workflow).
       
@@ -236,70 +310,81 @@ jobs:
           - 请先安装自签名证书，然后再部署 MSIX 包体。
 
           ### 🪄安装步骤
-          - 1.你需要开启 Windows 的开发者模式, 以便可以通过侧载包安装 UWP 应用
+          - 你需要开启 Windows 的开发者模式, 以便可以通过侧载包安装 UWP 应用
           - 开启步骤如下:- 进入 「设置」-(Windows 10) 打开 「更新和安全」 页面-(Windows 11) 打开 「隐私和安全性」 页面-(Windows 11 Beta 通道及以上) 打开 「系统」页面 
           - 选择 「开发者选项」-	打开 开发者模式,Windows 10 还需要勾选 「从任意源 (包括松散文件) 安装应用」
           -	找到页面下方 PowerShell 选项 (Windows 11 需要展开)- 勾选 「更改执行策略……」(Windows 10 需要点击应用)
-          - 2. 下载并双击运行自签名证书文件, 按照向导安装证书, 选择 「本地计算机」- 「将所有的证书都放到下列存储」-[点浏览选择受信任人并按提示安装即可] 
-          - 3. 下载并双击运行 MSIX 包体文件, 安装应用
+          - 下载并双击运行自签名证书文件, 按照向导安装证书, 选择 「本地计算机」- 「将所有的证书都放到下列存储」-[点浏览选择受信任人并按提示安装即可] 
+          - 下载并双击运行 MSIX 包体文件, 安装应用
           - 也可直接下载去action处下载 `Appx Packages (Release, x64).zip`, 解压后在 `AppxPackages\Files.Package_*_Test` 该路径中运行 `Install.ps1`
-        draft: false
-        prerelease: true
-        target_commitish: ${{ github.ref_name }}
-      
-    - name: Upload Appinstaller to Pre-release
-      uses: actions/upload-release-asset@v1
-      env:
-        GITHUB_TOKEN: ${{ secrets.GH_PAT }}
-      with:
-        upload_url:     ${{ steps.create_pre_release.outputs.upload_url }}
-        asset_path:     ${{ steps.get_pre_release_version.outputs.appinstaller_path }}
-        asset_name:     Files.Package-${{ steps.get_pre_release_version.outputs.pre_release_version }}.appinstaller
-        asset_content_type: application/xml
-      continue-on-error: false
+        draft: false  # 是否为草稿：否（直接发布）
+        prerelease: true  # 是否为预发布：是（标记为 Pre-release）
+        target_commitish: ${{ github.ref_name }}  # 关联的分支/提交（当前触发 workflow 的分支）
 
+    # 步骤19：将 appinstaller 文件上传到 GitHub Release
+    - name: Upload Appinstaller to Pre-release
+      uses: actions/upload-release-asset@v1  # 官方上传 Release 附件动作，版本 v1
+      env:
+        GITHUB_TOKEN: ${{ secrets.GH_PAT }}  # 身份认证令牌
+      with:
+        upload_url:     ${{ steps.create_pre_release.outputs.upload_url }}  # Release 的上传 URL（从步骤18获取）
+        asset_path:     ${{ steps.get_pre_release_version.outputs.appinstaller_path }}  # appinstaller 文件路径
+        asset_name:     Files.Package-${{ steps.get_pre_release_version.outputs.pre_release_version }}.appinstaller  # 附件名称（含版本号）
+        asset_content_type: application/xml  # 附件 MIME 类型（XML）
+      continue-on-error: false  # 上传失败则终止流程
+
+    # 步骤20：将 MSIX 捆绑包上传到 GitHub Release
     - name: Upload MSIXbundle to Pre-release
       uses: actions/upload-release-asset@v1
       env:
         GITHUB_TOKEN: ${{ secrets.GH_PAT }}
       with:
-        upload_url:     ${{ steps.create_pre_release.outputs.upload_url }}
-        asset_path:     ${{ steps.get_pre_release_version.outputs.msixbundle_path }}
-        asset_name:     "Files.Package-${{ steps.get_pre_release_version.outputs.pre_release_version }}.msixbundle"
-        asset_content_type: application/vnd.microsoft.msixbundle
+        upload_url:     ${{ steps.create_pre_release.outputs.upload_url }}  # Release 上传 URL
+        asset_path:     ${{ steps.get_pre_release_version.outputs.msixbundle_path }}  # MSIX 包路径
+        asset_name:     "Files.Package-${{ steps.get_pre_release_version.outputs.pre_release_version }}.msixbundle"  # 附件名称（含版本号）
+        asset_content_type: application/vnd.microsoft.msixbundle  # MSIX 包的 MIME 类型
       continue-on-error: false
 
+    # 步骤21：将自签名 CER 证书上传到 GitHub Release
     - name: Upload Self-signed CER to Pre-release
       uses: actions/upload-release-asset@v1
       env:
         GITHUB_TOKEN: ${{ secrets.GH_PAT }}
       with:
-        upload_url:    ${{ steps.create_pre_release.outputs.upload_url }}
-        asset_path:    ${{ steps.generate_cert.outputs.cer_full_path }}
-        asset_name:    "Files_SelfSigned-${{ steps.get_pre_release_version.outputs.pre_release_version }}.cer"
-        asset_content_type: application/x-x509-ca-cert
+        upload_url:    ${{ steps.create_pre_release.outputs.upload_url }}  # Release 上传 URL
+        asset_path:    ${{ steps.generate_cert.outputs.cer_full_path }}  # CER 证书路径
+        asset_name:    "Files_SelfSigned-${{ steps.get_pre_release_version.outputs.pre_release_version }}.cer"  # 附件名称（含版本号）
+        asset_content_type: application/x-x509-ca-cert  # CER 证书的 MIME 类型
       continue-on-error: false
 
+    # 步骤22：清理旧的预发布版本（保留最新 5 个，避免 Release 列表冗余）
     - name: Clean up old Pre-releases
       id: clean_old_pre_releases
       shell: pwsh
       env:
-        GH_PAT:              ${{ secrets.GH_PAT }}
-        KEEP_LATEST:         5
-        REPO:                "${{ github.repository_owner }}/${{ github.event.repository.name }}"
+        GH_PAT:              ${{ secrets.GH_PAT }}  # 身份认证令牌（需 delete_repo 权限）
+        KEEP_LATEST:         5  # 保留最新的预发布版本数量
+        REPO:                "${{ github.repository_owner }}/${{ github.event.repository.name }}"  # 仓库地址（如 owner/repo）
       run: |
+        # 调用 GitHub API 获取仓库的所有 Release
         $releases = Invoke-RestMethod -Uri "https://api.github.com/repos/$env:REPO/releases?per_page=100" `
           -Headers @{ Authorization = "Bearer $env:GH_PAT"; Accept = "application/vnd.github+json" }
+        # 筛选出「非草稿、预发布」的版本
         $preReleases = $releases | Where-Object { $_.prerelease -and -not $_.draft }
         
+        # 若预发布版本数 ≤ 保留数，无需清理
         if ($preReleases.Count -le $env:KEEP_LATEST) {
           Write-Host "No clean-up needed (Pre-releases: $($preReleases.Count) ≤ $env:KEEP_LATEST)"
           exit 0
         }
+        # 按创建时间倒序排序，跳过最新的 N 个，删除剩余旧版本
         $preReleases | Sort-Object created_at -Descending | Select-Object -Skip $env:KEEP_LATEST | ForEach-Object {
           Write-Host "Deleting Pre-release: $($_.tag_name)"
+          # 删除 Release 本身
           Invoke-RestMethod -Uri $_.url -Headers @{ Authorization = "Bearer $env:GH_PAT" } -Method Delete
+          # 删除对应的 Git 标签（避免标签冗余）
           Invoke-RestMethod -Uri "https://api.github.com/repos/$env:REPO/git/refs/tags/$($_.tag_name)" `
             -Headers @{ Authorization = "Bearer $env:GH_PAT" } -Method Delete -ErrorAction SilentlyContinue
         }
+        # 打印清理结果
         Write-Host "Cleaned up $($preReleases.Count - $env:KEEP_LATEST) old Pre-releases"
