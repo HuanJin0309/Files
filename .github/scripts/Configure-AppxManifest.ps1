@@ -11,22 +11,6 @@ param(
     [string]$SecretGitHubOAuthClientId = ""
 )
 
-if ([string]::IsNullOrEmpty($WorkingDir)) {
-    throw "Error: WorkingDir parameter is empty! Please pass a valid working directory."
-}
-
-# 关键修复2：校验并处理 PackageManifestPath（为空则用默认路径）
-if ([string]::IsNullOrEmpty($PackageManifestPath)) {
-    # 默认路径：WorkingDir + 标准清单路径（适配 Files 项目目录结构）
-    $PackageManifestPath = Join-Path -Path $WorkingDir -ChildPath "src\Files.App (Package)\Package.appxmanifest"
-    Write-Host "Warning: PackageManifestPath is empty, using default path: $PackageManifestPath"
-}
-
-# 关键修复3：校验路径是否存在，不存在则抛出明确错误
-if (-not (Test-Path $PackageManifestPath -PathType Leaf)) {
-    throw "Error: Package.appxmanifest not found at path: $PackageManifestPath`nPlease check if the file exists or the path is correct."
-}
-
 # Load Package.appxmanifest
 [xml]$xmlDoc = Get-Content $PackageManifestPath
 
