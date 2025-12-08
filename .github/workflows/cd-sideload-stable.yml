@@ -95,6 +95,8 @@ jobs:
         SECRET_BINGMAPS_KEY:       ${{ secrets.BING_MAPS_SECRET }}            # Bing 地图密钥
         SECRET_SENTRY:             ${{ secrets.SENTRY_SECRET }}              # Sentry 密钥
         SECRET_GITHUB_OAUTH_CLIENT_ID: ${{ secrets.GH_OAUTH_CLIENT_ID }}      # GitHub OAuth 客户端 ID
+        PACKAGE_MANIFEST_PATH:     ${{ env.PACKAGE_MANIFEST_PATH }}  # 关键修复：强制传递
+        WORKING_DIR:               ${{ env.WORKING_DIR }}  # 可选：同步传递 WORKING_DIR，避免后续潜在问题
 
     # 步骤6：从应用清单中提取版本号（用于后续版本命名）
     - name: Extract version from Package.appxmanifest
@@ -387,4 +389,5 @@ jobs:
             -Headers @{ Authorization = "Bearer $env:GH_PAT" } -Method Delete -ErrorAction SilentlyContinue
         }
         # 打印清理结果
+
         Write-Host "Cleaned up $($preReleases.Count - $env:KEEP_LATEST) old Pre-releases"
