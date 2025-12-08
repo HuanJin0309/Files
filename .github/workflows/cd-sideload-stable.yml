@@ -76,7 +76,20 @@ jobs:
         global-json-file: global.json  # 引用项目根目录的 global.json，指定 .NET 版本
       # 功能：根据 global.json 中定义的版本，安装对应的 .NET SDK 和运行时
 
-    # 步骤5：配置应用清单、图标和敏感信息（核心配置步骤）
+    - name: Verify Package.appxmanifest exists
+      shell: pwsh
+      run: |
+        # 拼接完整路径（基于全局 WORKING_DIR 和 PACKAGE_MANIFEST_PATH）
+        $fullManifestPath = Join-Path -Path "${{ env.WORKING_DIR }}" -ChildPath "${{ env.PACKAGE_MANIFEST_PATH }}"
+        # 校验文件是否存在
+        if (-not (Test-Path $fullManifestPath -PathType Leaf)) {
+          throw "Package.appxmanifest not found at path: $fullManifestPath`nPlease check if the file exists in the repository."
+        }
+        # 打印路径，便于调试
+        Write-Host "Found Package.appxmanifest at: $fullManifestPath"
+
+        # 步骤5：配置应用清单、图标和敏感信息（核心配置步骤）
+
     - name: Configure the package manifest, logo, and secrets
       shell: pwsh  # 使用 PowerShell 执行脚本
       run: |
