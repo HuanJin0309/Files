@@ -91,26 +91,24 @@ jobs:
 
     # 步骤5：配置应用清单、图标和敏感信息（核心配置步骤）
     - name: Configure the package manifest, logo, and secrets
-      shell: pwsh  # 使用 PowerShell 执行脚本
+      shell: pwsh
       run: |
         $fullManifestPath = Join-Path -Path "${{ github.workspace }}" -ChildPath "${{ env.PACKAGE_MANIFEST_PATH }}"
         Write-Host "Using Package.appxmanifest path: $fullManifestPath"
-        # 调用预定义的 PowerShell 脚本，传入配置参数
+        # 关键：确保每个反引号后无空格，参数对齐格式统一
         . './.github/scripts/Configure-AppxManifest.ps1' `
           -Branch "SideloadStable" `
-          -PackageManifestPath "$fullManifestPath" `  # 传入完整路径，避免相对路径问题
+          -PackageManifestPath "$fullManifestPath" `
           -Publisher "$env:SIDELOAD_PUBLISHER_SECRET" `
-          -WorkingDir "${{ github.workspace }}" `  # 关键修复：直接用原始值，不依赖 Step 级 env 变量
+          -WorkingDir "${{ github.workspace }}" `
           -SecretBingMapsKey "$env:SECRET_BINGMAPS_KEY" `
           -SecretSentry "$env:SECRET_SENTRY" `
           -SecretGitHubOAuthClientId "$env:SECRET_GITHUB_OAUTH_CLIENT_ID"
-      # 敏感变量注入：从 GitHub 仓库的 Secrets 中读取，避免明文暴露
       env:
         SIDELOAD_PUBLISHER_SECRET: ${{ secrets.SIDELOAD_PUBLISHER_SECRET }}
         SECRET_BINGMAPS_KEY:       ${{ secrets.BING_MAPS_SECRET }}
         SECRET_SENTRY:             ${{ secrets.SENTRY_SECRET }}
         SECRET_GITHUB_OAUTH_CLIENT_ID: ${{ secrets.GH_OAUTH_CLIENT_ID }}
-        # 仅保留 PACKAGE_MANIFEST_PATH（用于拼接路径，无需 WORKING_DIR）
         PACKAGE_MANIFEST_PATH:     ${{ env.PACKAGE_MANIFEST_PATH }}
 
     # 步骤6：从应用清单中提取版本号（用于后续版本命名）
