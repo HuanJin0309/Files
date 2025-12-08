@@ -76,42 +76,42 @@ jobs:
         global-json-file: global.json  # 引用项目根目录的 global.json，指定 .NET 版本
       # 功能：根据 global.json 中定义的版本，安装对应的 .NET SDK 和运行时
 
-    - name: Verify Package.appxmanifest exists
+    - name: Verify Working Directory exists
       shell: pwsh
       run: |
-        # 拼接完整路径（基于全局 WORKING_DIR 和 PACKAGE_MANIFEST_PATH）
-        $fullManifestPath = Join-Path -Path "${{ env.WORKING_DIR }}" -ChildPath "${{ env.PACKAGE_MANIFEST_PATH }}"
-        # 校验文件是否存在
-        if (-not (Test-Path $fullManifestPath -PathType Leaf)) {
-          throw "Package.appxmanifest not found at path: $fullManifestPath`nPlease check if the file exists in the repository."
+        # 校验 ${{ github.workspace }} 目录是否存在
+        $workingDir = "${{ github.workspace }}"
+        if (-not (Test-Path $workingDir -PathType Container)) {
+          throw "Critical Error: Working Directory does not exist! Path: $workingDir`nPossible reason: Repository checkout failed (check Step 1: Checkout the repository)."
         }
-        # 打印路径，便于调试
-        Write-Host "Found Package.appxmanifest at: $fullManifestPath"
+        # 打印目录信息，便于调试
+        Write-Host "Working Directory exists: $workingDir"
+        Write-Host "Directory contents (top-level):"
+        Get-ChildItem -Path $workingDir -Directory | Select-Object -ExpandProperty Name
 
-        # 步骤5：配置应用清单、图标和敏感信息（核心配置步骤）
-
+    # 步骤5：配置应用清单、图标和敏感信息（核心配置步骤）
     - name: Configure the package manifest, logo, and secrets
       shell: pwsh  # 使用 PowerShell 执行脚本
       run: |
-        $fullManifestPath = Join-Path -Path "$env:WORKING_DIR" -ChildPath "$env:PACKAGE_MANIFEST_PATH"
+        $fullManifestPath = Join-Path -Path "${{ github.workspace }}" -ChildPath "${{ env.PACKAGE_MANIFEST_PATH }}"
         Write-Host "Using Package.appxmanifest path: $fullManifestPath"
         # 调用预定义的 PowerShell 脚本，传入配置参数
         . './.github/scripts/Configure-AppxManifest.ps1' `
-          -Branch "SideloadStable" `  # 分支标识：侧载稳定版
-          -PackageManifestPath "$env:PACKAGE_MANIFEST_PATH" `  # 应用清单路径
-          -Publisher "$env:SIDELOAD_PUBLISHER_SECRET" `  # 发布者信息（从敏感变量获取）
-          -WorkingDir "$env:WORKING_DIR" `  # 工作目录
-          -SecretBingMapsKey "$env:SECRET_BINGMAPS_KEY" `  # Bing 地图 API 密钥（敏感信息）
-          -SecretSentry "$env:SECRET_SENTRY" `  # Sentry 错误监控密钥（敏感信息）
-          -SecretGitHubOAuthClientId "$env:SECRET_GITHUB_OAUTH_CLIENT_ID"  # GitHub OAuth 客户端 ID（敏感信息）
+          -Branch "SideloadStable" `
+          -PackageManifestPath "$fullManifestPath" `  # 传入完整路径，避免相对路径问题
+          -Publisher "$env:SIDELOAD_PUBLISHER_SECRET" `
+          -WorkingDir "${{ github.workspace }}" `  # 关键修复：直接用原始值，不依赖 Step 级 env 变量
+          -SecretBingMapsKey "$env:SECRET_BINGMAPS_KEY" `
+          -SecretSentry "$env:SECRET_SENTRY" `
+          -SecretGitHubOAuthClientId "$env:SECRET_GITHUB_OAUTH_CLIENT_ID"
       # 敏感变量注入：从 GitHub 仓库的 Secrets 中读取，避免明文暴露
       env:
-        SIDELOAD_PUBLISHER_SECRET: ${{ secrets.SIDELOAD_PUBLISHER_SECRET }}  # 侧载版发布者标识
-        SECRET_BINGMAPS_KEY:       ${{ secrets.BING_MAPS_SECRET }}            # Bing 地图密钥
-        SECRET_SENTRY:             ${{ secrets.SENTRY_SECRET }}              # Sentry 密钥
-        SECRET_GITHUB_OAUTH_CLIENT_ID: ${{ secrets.GH_OAUTH_CLIENT_ID }}      # GitHub OAuth 客户端 ID
+        SIDELOAD_PUBLISHER_SECRET: ${{ secrets.SIDELOAD_PUBLISHER_SECRET }}
+        SECRET_BINGMAPS_KEY:       ${{ secrets.BING_MAPS_SECRET }}
+        SECRET_SENTRY:             ${{ secrets.SENTRY_SECRET }}
+        SECRET_GITHUB_OAUTH_CLIENT_ID: ${{ secrets.GH_OAUTH_CLIENT_ID }}
+        # 仅保留 PACKAGE_MANIFEST_PATH（用于拼接路径，无需 WORKING_DIR）
         PACKAGE_MANIFEST_PATH:     ${{ env.PACKAGE_MANIFEST_PATH }}
-        WORKING_DIR:               ${{ env.WORKING_DIR }}
 
     # 步骤6：从应用清单中提取版本号（用于后续版本命名）
     - name: Extract version from Package.appxmanifest
