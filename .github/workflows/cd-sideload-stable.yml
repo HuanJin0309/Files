@@ -211,11 +211,21 @@ jobs:
       shell: pwsh
       run: |
         $preReleaseVersion = "$env:PRE_RELEASE_PREFIX-$(Get-Date -Format 'yyyyMMdd-HHmmss')"
-        $msixPath = "${{ steps.verify_uncompressed_artifacts.outputs.msixbundle_path }}"
-        $appinstallerPath = "${{ steps.verify_uncompressed_artifacts.outputs.appinstaller_path }}"
+
+        $appxPackageDir = "${{ env.APPX_PACKAGE_DIR }}"
+
+        $msixFiles = Get-ChildItem -Path $appxPackageDir -Filter "*.msixbundle" -Recurse
+        if ($msixFiles.Count -eq 0) { throw "No MSIXbundle found in $appxPackageDir" }
+        $msixPath = $msixFiles[0].FullName
+
+        $appinstallerFiles = Get-ChildItem -Path $appxPackageDir -Filter "*.appinstaller" -Recurse
+        if ($appinstallerFiles.Count -eq 0) { throw "No Appinstaller found in $appxPackageDir" }
+        $appinstallerPath = $appinstallerFiles[0].FullName
+
         if ([string]::IsNullOrEmpty($msixPath) -or [string]::IsNullOrEmpty($appinstallerPath)) {
           throw "Artifact path empty: MSIX($msixPath) | Appinstaller($appinstallerPath)"
         }
+
         echo "pre_release_version=$preReleaseVersion" >> $env:GITHUB_OUTPUT
         echo "msixbundle_path=$msixPath" >> $env:GITHUB_OUTPUT
         echo "appinstaller_path=$appinstallerPath" >> $env:GITHUB_OUTPUT
