@@ -306,13 +306,13 @@ jobs:
         asset_content_type: application/x-x509-ca-cert
       continue-on-error: false
 
-    # 步骤22：清理旧的预发布版本（保留最新 5 个，避免 Release 列表冗余）
+    # 步骤22：清理旧的预发布版本（保留最新 10 个，避免 Release 列表冗余）
     - name: Clean up old Pre-releases
       id: clean_old_pre_releases
       shell: pwsh
       env:
         GH_PAT:              ${{ secrets.GH_PAT }}
-        KEEP_LATEST:         5
+        KEEP_LATEST:         10
         REPO:                "${{ github.repository_owner }}/${{ github.event.repository.name }}"
       run: |
         $releases = Invoke-RestMethod -Uri "https://api.github.com/repos/$env:REPO/releases?per_page=100" `
@@ -329,4 +329,5 @@ jobs:
           Invoke-RestMethod -Uri "https://api.github.com/repos/$env:REPO/git/refs/tags/$($_.tag_name)" `
             -Headers @{ Authorization = "Bearer $env:GH_PAT" } -Method Delete -ErrorAction SilentlyContinue
         }
+
         Write-Host "Cleaned up $($preReleases.Count - $env:KEEP_LATEST) old Pre-releases"
