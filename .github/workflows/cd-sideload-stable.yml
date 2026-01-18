@@ -57,24 +57,30 @@ jobs:
     - name: Checkout the repository
       uses: actions/checkout@v4  # 使用官方 Checkout 动作，版本 v4
 
-    # 新增步骤
-    - name: Install VS2019 v145 Build Tools
-      uses: microsoft/setup-msbuild@v2
-      with:
-        vs-version: '17.0'
-        components: 'Microsoft.VisualStudio.Component.VC.Tools.x64'
-        toolset-version: '14.29'
-    
-    # 新增步骤
-    - name: Configure MSVC v145 Environment
-      uses: ilammy/msvc-dev-cmd@v1
-      with:
-        toolset: '14.29'
-        arch: x64
+    # 修复后的步骤2：用 Chocolatey 安装 v145 工具集
+    - name: Install VS2019 v145 Build Tools (Chocolatey)
+      shell: pwsh
+      run: |
+        if (-not (Get-Command choco -ErrorAction SilentlyContinue)) {
+          [System.Net.ServicePointManager]::SecurityProtocol = [System.Net.ServicePointManager]::SecurityProtocol -bor 3072
+          Invoke-Expression ((New-Object System.Net.WebClient).DownloadString('https://community.chocolatey.org/install.ps1'))
+          $env:Path += ";$env:ProgramData\chocolatey\bin"
+        }
+        choco install visualstudio2019-build-tools -y --no-progress `
+          --package-parameters "--add Microsoft.VisualStudio.Component.VC.Tools.x64 --add Microsoft.VisualStudio.Component.VC.Tools.x86 --quiet"
+        $vcVarsPath = "C:\Program Files (x86)\Microsoft Visual Studio\2019\BuildTools\VC\Auxiliary\Build\vcvars64.bat"
+        if (-not (Test-Path $vcVarsPath)) {
+          throw "v145 工具集安装失败，未找到 vcvars64.bat：$vcVarsPath"
+        }
+        Write-Host "v145 工具集安装成功，路径：$vcVarsPath"
 
-    # 步骤2：配置 MSBuild 工具（用于构建 Visual Studio 项目）
-    - name: Setup MSBuild
-      uses: microsoft/setup-msbuild@v2  # 使用微软官方 MSBuild 配置动作，版本 v2
+    # 修复后的步骤3：直接配置 v145 环境
+    - name: Configure MSVC v145 Environment (Direct Call)
+      shell: cmd
+      run: |
+        "C:\Program Files (x86)\Microsoft Visual Studio\2019\BuildTools\VC\Auxiliary\Build\vcvars64.bat" && set > %GITHUB_ENV%
+      env:
+        GITHUB_ENV: ${{ github.env }}
 
     # 步骤3：配置 NuGet 工具（用于管理 .NET 项目依赖）
     - name: Setup NuGet
