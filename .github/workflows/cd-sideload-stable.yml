@@ -56,12 +56,20 @@ jobs:
     # 步骤1：克隆代码仓库到工作目录
     - name: Checkout the repository
       uses: actions/checkout@v4  # 使用官方 Checkout 动作，版本 v4
-      
+
     # 新增步骤
-    - name: Install Visual Studio v145 Build Tools
+    - name: Install VS2019 v145 Build Tools
+      uses: microsoft/setup-msbuild@v2
+      with:
+        vs-version: '17.0'
+        components: 'Microsoft.VisualStudio.Component.VC.Tools.x64'
+        toolset-version: '14.29'
+    
+    # 新增步骤
+    - name: Configure MSVC v145 Environment
       uses: ilammy/msvc-dev-cmd@v1
       with:
-        toolset: 14.5
+        toolset: '14.29'
         arch: x64
 
     # 步骤2：配置 MSBuild 工具（用于构建 Visual Studio 项目）
