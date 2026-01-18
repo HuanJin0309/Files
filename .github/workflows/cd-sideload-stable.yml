@@ -57,48 +57,49 @@ jobs:
     - name: Checkout the repository
       uses: actions/checkout@v4  # 使用官方 Checkout 动作，版本 v4
 
-    # 修复后的步骤2：用 Chocolatey 安装 v145 工具集
-    - name: Install VS2019 v145 Build Tools (Official Offline)
+    # 步骤2：安装 VS2019 v145 工具集（指定版本+动态查找路径）
+    - name: Install VS2019 v145 Build Tools (Force Version)
       shell: pwsh
       run: |
-        # 微软 VS2019 v145 工具集离线安装包 URL（官方来源，稳定可靠）
         $installerUrl = "https://aka.ms/vs/16/release/vs_buildtools.exe"
         $installerPath = "$env:TEMP\vs_buildtools.exe"
-    
-        # 下载离线安装包
         Write-Host "正在下载 VS2019 Build Tools 离线安装包..."
-        Invoke-WebRequest -Uri $installerUrl -OutFile $installerPath -UseBasicParsing
-        if (-not (Test-Path $installerPath)) {
-          throw "安装包下载失败：$installerPath"
-        }
-    
-        # 静默安装 v145 工具集（仅安装必要组件，精简高效）
-        Write-Host "正在静默安装 v145 工具集..."
+        Invoke-WebRequest -Uri $installerUrl -OutFile $installerPath -UseBasicParsing -TimeoutSec 300
+        if (-not (Test-Path $installerPath)) { throw "安装包下载失败：$installerPath" }
+
+        # 强制安装 v145 工具集（指定版本号 14.29.30133，对应 VS2019 最新更新）
+        Write-Host "正在静默安装 v145 工具集（版本 14.29.30133）..."
         $installArgs = "--quiet --norestart --wait " +
-                      "--add Microsoft.VisualStudio.Component.VC.Tools.x64 " +
-                      "--add Microsoft.VisualStudio.Component.VC.Tools.x86 " +
-                      "--add Microsoft.VisualStudio.Component.VC.Redist.14.Latest " +
-                      "--installPath ""C:\Program Files (x86)\Microsoft Visual Studio\2019\BuildTools"""
-    
+                     "--add Microsoft.VisualStudio.Component.VC.Tools.x64=14.29.30133 " +
+                     "--add Microsoft.VisualStudio.Component.VC.Tools.x86=14.29.30133 " +
+                     "--add Microsoft.VisualStudio.Component.VC.Redist.14.Latest " +
+                     "--installPath ""C:\VS2019BuildTools"""  # 自定义安装路径，避免与其他 VS 版本冲突
+
         $process = Start-Process -FilePath $installerPath -ArgumentList $installArgs -Wait -PassThru -NoNewWindow
         if ($process.ExitCode -ne 0) {
-          throw "v145 工具集安装失败，退出码：$($process.ExitCode)"
+          throw "v145 工具集安装失败，退出码：$($process.ExitCode)（可添加 --verbose 参数查看详细日志）"
         }
-    
-        # 验证工具集是否安装成功
-        $vcVarsPath = "C:\Program Files (x86)\Microsoft Visual Studio\2019\BuildTools\VC\Auxiliary\Build\vcvars64.bat"
-        if (-not (Test-Path $vcVarsPath)) {
-          throw "v145 工具集安装失败，未找到 vcvars64.bat：$vcVarsPath"
-        }
-        Write-Host "✅ v145 工具集安装成功，路径：$vcVarsPath"
 
-    # 保留原有的环境配置步骤（直接调用官方脚本）
-    - name: Configure MSVC v145 Environment (Direct Call)
+        # 动态查找 vcvars64.bat（兼容不同安装路径）
+        Write-Host "正在查找 vcvars64.bat 路径..."
+        $vcVarsPath = Get-ChildItem -Path "C:\VS2019BuildTools" -Recurse -Filter "vcvars64.bat" | Select-Object -First 1
+        if (-not $vcVarsPath) {
+          # 若自定义路径未找到，搜索系统默认路径
+          $vcVarsPath = Get-ChildItem -Path "C:\Program Files (x86)\Microsoft Visual Studio\2019" -Recurse -Filter "vcvars64.bat" | Select-Object -First 1
+          if (-not $vcVarsPath) { throw "未找到 vcvars64.bat，v145 工具集安装失败" }
+        }
+        $vcVarsFullPath = $vcVarsPath.FullName
+        echo "VCVARS64_PATH=$vcVarsFullPath" >> $env:GITHUB_ENV  # 存入环境变量，供后续使用
+        Write-Host "✅ v145 工具集安装成功，vcvars64.bat 路径：$vcVarsFullPath"
+
+    # 步骤3：配置 MSVC v145 环境（使用动态查找的路径）
+    - name: Configure MSVC v145 Environment
       shell: cmd
       run: |
-        "C:\Program Files (x86)\Microsoft Visual Studio\2019\BuildTools\VC\Auxiliary\Build\vcvars64.bat" && set > %GITHUB_ENV%
+        "%VCVARS64_PATH%" && set > %GITHUB_ENV%
       env:
         GITHUB_ENV: ${{ github.env }}
+        VCVARS64_PATH: ${{ env.VCVARS64_PATH }}  # 引用上一步动态查找的路径
 
     # 步骤3：配置 NuGet 工具（用于管理 .NET 项目依赖）
     - name: Setup NuGet
