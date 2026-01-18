@@ -56,6 +56,13 @@ jobs:
     # 步骤1：克隆代码仓库到工作目录
     - name: Checkout the repository
       uses: actions/checkout@v4  # 使用官方 Checkout 动作，版本 v4
+      
+    # 新增步骤
+    - name: Install Visual Studio v145 Build Tools
+      uses: ilammy/msvc-dev-cmd@v1
+      with:
+        toolset: 14.5
+        arch: x64
 
     # 步骤2：配置 MSBuild 工具（用于构建 Visual Studio 项目）
     - name: Setup MSBuild
@@ -160,6 +167,7 @@ jobs:
         msbuild "$env:LAUNCHER_PROJECT_PATH" `
         -p:Platform=$env:PLATFORM `
         -p:Configuration=$env:CONFIGURATION `
+        -p:PlatformToolset=v145 `
         -v:quiet
 
     # 步骤12：构建并打包应用（生成 MSIX 包和 appinstaller 文件）
