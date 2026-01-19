@@ -57,49 +57,12 @@ jobs:
     - name: Checkout the repository
       uses: actions/checkout@v4  # 使用官方 Checkout 动作，版本 v4
 
-    # 步骤2：安装 VS2019 v145 工具集（指定版本+动态查找路径）
-    - name: Install VS2019 v145 Build Tools (Force Version)
-      shell: pwsh
-      run: |
-        $installerUrl = "https://aka.ms/vs/16/release/vs_buildtools.exe"
-        $installerPath = "$env:TEMP\vs_buildtools.exe"
-        Write-Host "正在下载 VS2019 Build Tools 离线安装包..."
-        Invoke-WebRequest -Uri $installerUrl -OutFile $installerPath -UseBasicParsing -TimeoutSec 300
-        if (-not (Test-Path $installerPath)) { throw "安装包下载失败：$installerPath" }
-
-        # 强制安装 v145 工具集（指定版本号 14.29.30133，对应 VS2019 最新更新）
-        Write-Host "正在静默安装 v145 工具集（版本 14.29.30133）..."
-        $installArgs = "--quiet --norestart --wait " +
-                     "--add Microsoft.VisualStudio.Component.VC.Tools.x64=14.29.30133 " +
-                     "--add Microsoft.VisualStudio.Component.VC.Tools.x86=14.29.30133 " +
-                     "--add Microsoft.VisualStudio.Component.VC.Redist.14.Latest " +
-                     "--installPath ""C:\VS2019BuildTools"""  # 自定义安装路径，避免与其他 VS 版本冲突
-
-        $process = Start-Process -FilePath $installerPath -ArgumentList $installArgs -Wait -PassThru -NoNewWindow
-        if ($process.ExitCode -ne 0) {
-          throw "v145 工具集安装失败，退出码：$($process.ExitCode)（可添加 --verbose 参数查看详细日志）"
-        }
-
-        # 动态查找 vcvars64.bat（兼容不同安装路径）
-        Write-Host "正在查找 vcvars64.bat 路径..."
-        $vcVarsPath = Get-ChildItem -Path "C:\VS2019BuildTools" -Recurse -Filter "vcvars64.bat" | Select-Object -First 1
-        if (-not $vcVarsPath) {
-          # 若自定义路径未找到，搜索系统默认路径
-          $vcVarsPath = Get-ChildItem -Path "C:\Program Files (x86)\Microsoft Visual Studio\2019" -Recurse -Filter "vcvars64.bat" | Select-Object -First 1
-          if (-not $vcVarsPath) { throw "未找到 vcvars64.bat，v145 工具集安装失败" }
-        }
-        $vcVarsFullPath = $vcVarsPath.FullName
-        echo "VCVARS64_PATH=$vcVarsFullPath" >> $env:GITHUB_ENV  # 存入环境变量，供后续使用
-        Write-Host "✅ v145 工具集安装成功，vcvars64.bat 路径：$vcVarsFullPath"
-
-    # 步骤3：配置 MSVC v145 环境（使用动态查找的路径）
-    - name: Configure MSVC v145 Environment
-      shell: cmd
-      run: |
-        "%VCVARS64_PATH%" && set > %GITHUB_ENV%
-      env:
-        GITHUB_ENV: ${{ github.env }}
-        VCVARS64_PATH: ${{ env.VCVARS64_PATH }}  # 引用上一步动态查找的路径
+    # 核心修复：安装 VS2022 v143 工具集（官方支持，一键安装无冲突）
+    - name: Setup MSBuild & VS2022 v143 Build Tools
+      uses: microsoft/setup-msbuild@v2
+      with:
+        vs-version: '17.0'  # VS2022 版本
+        components: 'Microsoft.VisualStudio.Component.VC.Tools.x64'  # v143 工具集（默认包含）
 
     # 步骤3：配置 NuGet 工具（用于管理 .NET 项目依赖）
     - name: Setup NuGet
@@ -200,7 +163,7 @@ jobs:
         msbuild "$env:LAUNCHER_PROJECT_PATH" `
         -p:Platform=$env:PLATFORM `
         -p:Configuration=$env:CONFIGURATION `
-        -p:PlatformToolset=v145 `
+        -p:PlatformToolset=v143 `
         -v:quiet
 
     # 步骤12：构建并打包应用（生成 MSIX 包和 appinstaller 文件）
