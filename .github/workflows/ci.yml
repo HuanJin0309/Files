@@ -47,7 +47,7 @@ jobs:
 
   check-formatting:
 
-    if: github.repository_owner == 'files-community'
+    if: github.repository_owner == 'huanjin0309'
 
     runs-on: windows-latest
 
